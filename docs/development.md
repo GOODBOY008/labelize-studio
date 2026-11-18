@@ -71,6 +71,7 @@ Use a second terminal for control commands. On Windows, use the corresponding `.
 
 ```sh
 target/debug/labelize-printer-daemon submit /absolute/path/to/label.zpl --wait
+target/debug/labelize-printer-daemon submit examples/designer-showcase.labelize.json --format zpl --wait
 target/debug/labelize-printer-daemon status
 target/debug/labelize-printer-daemon test-print --wait
 target/debug/labelize-printer-daemon job TASK_UUID
@@ -78,6 +79,8 @@ target/debug/labelize-printer-daemon retry TASK_UUID --wait
 ```
 
 Since v0.2.0, the daemon accepts ZPL, EPL, TSPL/TSC, CPCL, DPL, and `.labelize.json` templates through `submit`. The desktop executable can also take a label file as its first argument.
+
+In a development build, `submit --format` overrides the output format for one job. Choose `pdf` or `png` for any label document, or `zpl` for a design template. The job uses the configured output directory and resolution.
 
 | Command | Behavior |
 | --- | --- |
@@ -154,13 +157,15 @@ Add `--profile release` to test release binaries. These tests start a real daemo
 
 ### Desktop smoke test
 
-From an active desktop session, launch GPUI with the two-page ZPL example and verify its preview and background service:
+From a desktop session, run the native preview checks with the debug binaries.
 
 ```sh
 python3 scripts/test/desktop-smoke.py --bin-dir target/debug
 ```
 
 Run it once from an X11 session and once from a Wayland session when testing both Linux backends. The test uses temporary application data. The platform-specific printing and login checks are listed in the [acceptance record](acceptance.md#remaining-acceptance-work).
+
+The test opens the two-page ZPL example, exports the showcase design at 12 dots/mm, and restarts the app and service. It checks that the reopened ZPL preview uses the saved resolution and the design's physical dimensions.
 
 The Linux CI job also runs this test under Xvfb/Openbox and nested Weston using software Vulkan.
 

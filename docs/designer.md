@@ -47,7 +47,13 @@ EAN-13, EAN-8, and UPC-A accept the full number or the body without its final ch
 
 Templates embed images and the document font and remain self-contained. The expanded designer reads version 1 and version 2 templates; saving writes version 2. Earlier app versions cannot read version 2, so keep a copy of a version-1 file if you need to reopen it with an older app. Existing version-1 defaults preserve their previous rendered appearance.
 
-PDF combines the document pages into one file; PNG saves one image per page. Exports capture the content and options when submitted and continue in the background after a tab or window closes. Designs do not export printer-language commands, and opening a ZPL/EPL/TSPL/CPCL/DPL file keeps it as a source document rather than reconstructing design objects.
+PDF combines the document pages into one file. PNG saves one image per page. Exports capture the content and options when submitted and continue in the background after a tab or window closes.
+
+### Export a design as ZPL (unreleased)
+
+Select the target printer's **8 dpmm** or **12 dpmm** resolution under **Page settings**. In **Export**, choose **ZPL** and the output folder, then click **Export ZPL**. The completed job contains a single `.zpl` file. To preview it again in Studio, open it as a label file and select the same resolution.
+
+The exporter rounds the outer label dimensions up to whole printer dots and embeds the visible layers as a monochrome graphic. Text, imported fonts, and barcodes are rendered into that graphic. Keep the `.labelize.json` template for editing. The minimum ZPL print width is two dots. [Zebra print-width reference](https://cpws.zebra.com/cpws/docs/zpl/PW_Command.pdf)
 
 ## Rendering quality (unreleased)
 

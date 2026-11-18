@@ -206,6 +206,115 @@ fn vector_pdf_keeps_native_text_paths_copies_sizes_and_atomic_recovery() {
 }
 
 #[test]
+fn design_zpl_reopens_at_native_size_with_the_same_monochrome_pixels() -> anyhow::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let paths = AppPaths::new(temp.path().join("state"))?;
+    let store = Store::open(paths.clone())?;
+    let mut design: DesignDocument = serde_json::from_slice(include_bytes!(
+        "../../../examples/designer-showcase.labelize.json"
+    ))?;
+    // Exercise a partially filled byte at the right edge and multiple graphic fields.
+    design.width_mm = 102.125;
+    let mut corner = DesignObject::new(ObjectKind::Rectangle);
+    corner.x = design.width_mm - 1.;
+    corner.y = design.height_mm - 1.;
+    corner.width = 1.;
+    corner.height = 1.;
+    corner.style.filled = true;
+    design.objects.push(corner);
+    let input = temp.path().join("design.labelize.json");
+    let bytes = serde_json::to_vec(&design)?;
+    fs::write(&input, &bytes)?;
+    for (dpmm, size) in [(8, (817, 1216)), (12, (1226, 1824))] {
+        let defaults = Settings {
+            dpmm,
+            ..options(temp.path())
+        };
+        let settings = Settings {
+            format: OutputFormat::Zpl,
+            render_mode: RenderMode::Vector,
+            antialias: true,
+            png_scale: 4,
+            ..defaults.clone()
+        };
+        let expected = pixels(&bytes, DocumentKind::Design, &defaults)?;
+        let preview = pixels(&bytes, DocumentKind::Design, &settings)?;
+        assert_eq!(preview.dimensions(), size);
+        assert_eq!(preview.get_pixel(size.0 - 1, size.1 - 1)[0], 0);
+        assert!(!has_gray(&preview));
+        assert!(
+            preview == expected,
+            "ZPL preview differs from the monochrome design"
+        );
+
+        let job = store.import_document(&input, "Design", DocumentKind::Design, settings)?;
+        let receipt = output::render_job(&paths, &store.job(&job.id)?)?;
+        assert_eq!((receipt.page_count, receipt.files.len()), (1, 1));
+        let path = &receipt.files[0];
+        assert_eq!(path.extension().unwrap(), "zpl");
+        let zpl = fs::read_to_string(path)?;
+        assert!(zpl.matches("^GFA,").count() > 1);
+        let kind = DocumentKind::detect(path, zpl.as_bytes())?;
+        assert_eq!(kind, DocumentKind::Zpl);
+        let reopened = pixels(zpl.as_bytes(), kind, &defaults)?;
+        assert_eq!(reopened.dimensions(), size);
+        assert!(
+            reopened == preview,
+            "ZPL changed the design pixels at {dpmm} dpmm"
+        );
+        assert_eq!(output::render_job(&paths, &job)?.files, receipt.files);
+    }
+    Ok(())
+}
+
+#[test]
+fn zpl_is_only_accepted_as_a_design_export() -> anyhow::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let store = Store::open(AppPaths::new(temp.path().join("state"))?)?;
+    let settings = Settings {
+        format: OutputFormat::Zpl,
+        ..options(temp.path())
+    };
+    let input = temp.path().join("source.zpl");
+    fs::write(&input, b"^XA^FO0,0^GB8,8,1^FS^XZ")?;
+    assert!(store.save_settings(&settings).is_err());
+    assert_eq!(store.settings()?.format, OutputFormat::Pdf);
+    assert!(store
+        .import_document(&input, "Source", DocumentKind::Zpl, settings)
+        .is_err());
+    assert!(store.jobs(1)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn zpl_preview_and_export_reject_widths_below_two_dots() -> anyhow::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let paths = AppPaths::new(temp.path().join("state"))?;
+    let store = Store::open(paths.clone())?;
+    let settings = Settings {
+        format: OutputFormat::Zpl,
+        ..options(temp.path())
+    };
+    let design = DesignDocument {
+        width_mm: 0.125,
+        height_mm: 2.,
+        objects: Vec::new(),
+        ..Default::default()
+    };
+    let bytes = serde_json::to_vec(&design)?;
+    assert!(pixels(&bytes, DocumentKind::Design, &settings)
+        .unwrap_err()
+        .to_string()
+        .contains("two dots"));
+    let input = temp.path().join("narrow.labelize.json");
+    fs::write(&input, bytes)?;
+    let job = store.import_document(&input, "Narrow", DocumentKind::Design, settings)?;
+    assert!(output::render_job(&paths, &job).is_err());
+    assert_eq!(fs::read_dir(&job.settings.output_dir)?.count(), 0);
+    Ok(())
+}
+
+#[test]
 fn scalable_png_preserves_physical_size_and_preview_export_identity() {
     let temp = tempfile::tempdir().unwrap();
     let paths = AppPaths::new(temp.path().join("state")).unwrap();

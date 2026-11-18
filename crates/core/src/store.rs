@@ -38,7 +38,7 @@ impl Store {
             .unwrap_or_else(|| Ok(Settings::default()))
     }
     pub fn save_settings(&self, settings: &Settings) -> Result<()> {
-        settings.validate()?;
+        settings.validate_for(None)?;
         self.connection.execute("INSERT INTO settings(id,body) VALUES(1,?1) ON CONFLICT(id) DO UPDATE SET body=excluded.body",
             [serde_json::to_string(settings)?])?;
         Ok(())
@@ -95,7 +95,7 @@ impl Store {
         let now = Utc::now().to_rfc3339();
         private_dir(&self.paths.job_dir(&id)?)?;
         let settings = self.settings()?;
-        settings.validate()?;
+        settings.validate_for(None)?;
         let job = JobRecord {
             id,
             title: title.chars().take(200).collect(),
@@ -165,7 +165,7 @@ impl Store {
         language: crate::document::DocumentKind,
         settings: Settings,
     ) -> Result<JobRecord> {
-        settings.validate()?;
+        settings.validate_for(Some(language))?;
         let metadata = fs::metadata(path).context("Cannot read label input")?;
         anyhow::ensure!(
             metadata.is_file() && metadata.len() > 0 && metadata.len() <= MAX_INPUT_BYTES,

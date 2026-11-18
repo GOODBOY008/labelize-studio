@@ -306,6 +306,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let store = SessionStore::new(temp.path().into());
         let mut draft = Draft::new(Settings::default());
+        draft.options.format = labelize_printer_core::OutputFormat::Zpl;
         let mut code = DesignObject::new(ObjectKind::DataMatrix);
         code.style.name = "零件编号".into();
         code.style.rotation = 90;
@@ -330,6 +331,7 @@ mod tests {
         let (restored, warnings) = store.load();
         assert!(warnings.is_empty());
         assert_eq!(restored.tabs[0].design, draft.design);
+        assert_eq!(restored.tabs[0].options, draft.options);
         assert_eq!(restored.tabs[0].selected, Some(1));
         assert_eq!(restored.tabs[0].fields[12], "-");
         assert!(restored.tabs[0].dirty);

@@ -78,7 +78,7 @@ impl Language {
     pub fn text(self, text: Text) -> &'static str {
         let (chinese, english) = match text {
             Text::Studio => ("工作台", "Workspace"),
-            Text::StudioDescription => ("打开、编辑和预览标签文件，设计标签并保存 PDF / PNG。", "Open, edit and preview label files, design labels and save PDF / PNG."),
+            Text::StudioDescription => ("打开或设计标签，预览并导出 PDF 或 PNG。设计稿还可导出为 ZPL。", "Open or design labels, preview them, and export PDF or PNG. Designs can also export to ZPL."),
             Text::BarTenderExport => (
                 "这是 BarTender 设计文件（.btw）。请在 BarTender 中选择 ZPL 打印机驱动，勾选「打印到文件」，保存为 .prn 后在 Labelize Studio 中打开。",
                 labelize_printer_core::document::UnsupportedBarTender::GUIDANCE,

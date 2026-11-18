@@ -19,7 +19,10 @@ pub struct RenderedPage {
 
 /// Commit rendered label documents or system raster pages through one output sink.
 pub fn render_job(paths: &AppPaths, job: &JobRecord) -> Result<OutputReceipt> {
-    job.settings.validate()?;
+    job.settings.validate_for(match &job.input {
+        PrintJobInput::LabelFile { language, .. } => Some(*language),
+        _ => None,
+    })?;
     anyhow::ensure!(
         job.transport_complete,
         "Incomplete transport cannot be rendered"
@@ -41,12 +44,11 @@ pub fn render_job(paths: &AppPaths, job: &JobRecord) -> Result<OutputReceipt> {
             "Existing output belongs to another or invalid job"
         );
         anyhow::ensure!(
-            receipt.files.len()
-                == if job.settings.format == OutputFormat::Pdf {
-                    1
-                } else {
-                    receipt.page_count
-                },
+            match job.settings.format {
+                OutputFormat::Pdf => receipt.files.len() == 1,
+                OutputFormat::Png => receipt.files.len() == receipt.page_count,
+                OutputFormat::Zpl => receipt.page_count == 1 && receipt.files.len() == 1,
+            },
             "Existing output receipt has an invalid file count"
         );
         anyhow::ensure!(
@@ -153,7 +155,6 @@ struct PageSink {
     kids: Vec<Object>,
     files: Vec<PathBuf>,
     count: usize,
-    encoded_pdf: bool,
 }
 
 impl PageSink {
@@ -170,7 +171,6 @@ impl PageSink {
             kids: Vec::new(),
             files: Vec::new(),
             count: 0,
-            encoded_pdf: false,
         }
     }
     fn document(
@@ -179,17 +179,22 @@ impl PageSink {
         kind: crate::document::DocumentKind,
         settings: &Settings,
     ) -> Result<()> {
-        if self.format == OutputFormat::Pdf && settings.render_mode == RenderMode::Vector {
-            let (pdf, count) = crate::document::vector_pdf(bytes, kind, settings)?;
-            let name = format!("{}.pdf", self.base);
-            atomic_write(&self.temp_dir.join(&name), &pdf)?;
-            self.files.push(self.final_dir.join(name));
-            self.count = count;
-            self.encoded_pdf = true;
-            Ok(())
-        } else {
-            crate::document::render(bytes, kind, settings, |page| self.push(page))
-        }
+        let (extension, contents, count) = match self.format {
+            OutputFormat::Zpl => {
+                let design: crate::design::DesignDocument = serde_json::from_slice(bytes)?;
+                ("zpl", design.to_zpl(settings.dpmm)?.into_bytes(), 1)
+            }
+            OutputFormat::Pdf if settings.render_mode == RenderMode::Vector => {
+                let (pdf, count) = crate::document::vector_pdf(bytes, kind, settings)?;
+                ("pdf", pdf, count)
+            }
+            _ => return crate::document::render(bytes, kind, settings, |page| self.push(page)),
+        };
+        let name = format!("{}.{extension}", self.base);
+        atomic_write(&self.temp_dir.join(&name), &contents)?;
+        self.files.push(self.final_dir.join(name));
+        self.count = count;
+        Ok(())
     }
     fn push(&mut self, page: RenderedPage) -> Result<()> {
         validate_pixels(page.pixels.width(), page.pixels.height())?;
@@ -249,7 +254,7 @@ impl PageSink {
     }
     fn finish(mut self, id: &str) -> Result<OutputReceipt> {
         anyhow::ensure!(self.count > 0, "Cannot save an empty print job");
-        if self.format == OutputFormat::Pdf && !self.encoded_pdf {
+        if self.format == OutputFormat::Pdf && self.files.is_empty() {
             self.document.objects.insert(
                 self.pages_id,
                 Object::Dictionary(dictionary! {

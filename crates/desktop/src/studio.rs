@@ -1344,38 +1344,57 @@ impl Studio {
             .child(section(self.t("导出文件", "EXPORT")))
             .child(
                 row().children(
-                    [(OutputFormat::Pdf, "PDF"), (OutputFormat::Png, "PNG")]
-                        .into_iter()
-                        .enumerate()
-                        .map(|(i, (format, label))| {
-                            Button::new(("export-format", i))
-                                .flex_1()
-                                .label(label)
-                                .selected(self.options.format == format)
-                                .on_click(cx.listener(move |s, _, _, cx| {
-                                    if s.options.format == format {
-                                        return;
-                                    }
-                                    let scale = s.options.output_scale();
-                                    s.options.format = format;
-                                    if s.options.output_scale() != scale {
-                                        s.render_options_changed(cx);
-                                    } else {
-                                        s.persist_version += 1;
-                                        cx.notify();
-                                    }
-                                }))
-                        }),
+                    [
+                        (OutputFormat::Pdf, "PDF"),
+                        (OutputFormat::Png, "PNG"),
+                        (OutputFormat::Zpl, "ZPL"),
+                    ]
+                    .into_iter()
+                    .filter(|(format, _)| *format != OutputFormat::Zpl || self.design.is_some())
+                    .enumerate()
+                    .map(|(i, (format, label))| {
+                        Button::new(("export-format", i))
+                            .flex_1()
+                            .label(label)
+                            .selected(self.options.format == format)
+                            .on_click(cx.listener(move |s, _, _, cx| {
+                                if s.options.format == format {
+                                    return;
+                                }
+                                let previous = s.options.format;
+                                let scale = s.options.output_scale();
+                                s.options.format = format;
+                                if previous == OutputFormat::Zpl
+                                    || format == OutputFormat::Zpl
+                                    || s.options.output_scale() != scale
+                                {
+                                    s.render_options_changed(cx);
+                                } else {
+                                    s.persist_version += 1;
+                                    cx.notify();
+                                }
+                            }))
+                    }),
                 ),
             )
-            .child(self.render_controls(cx))
-            .child(div().text_xs().text_color(rgb(MUTED)).child(
-                if self.options.format == OutputFormat::Pdf {
-                    self.t("全部页面合并为一个 PDF", "All pages in one PDF")
-                } else {
-                    self.t("每页保存为一张 PNG", "One PNG file per page")
-                },
-            ))
+            .when(self.options.format != OutputFormat::Zpl, |panel| {
+                panel.child(self.render_controls(cx))
+            })
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(rgb(MUTED))
+                    .child(match self.options.format {
+                        OutputFormat::Pdf => {
+                            self.t("全部页面合并为一个 PDF", "All pages in one PDF")
+                        }
+                        OutputFormat::Png => self.t("每页保存为一张 PNG", "One PNG file per page"),
+                        OutputFormat::Zpl => self.t(
+                            "按所选打印分辨率导出黑白位图。",
+                            "Monochrome bitmap at the selected printer resolution.",
+                        ),
+                    }),
+            )
             .child(
                 div()
                     .text_xs()

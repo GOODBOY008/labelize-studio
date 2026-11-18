@@ -31,10 +31,15 @@ enum Notice {
     Message(String),
 }
 
+enum PendingDocument {
+    File(PathBuf),
+    NewDesign,
+}
+
 pub struct Workbench {
     pub language: Language,
     paths: AppPaths,
-    defaults: Settings,
+    defaults: Option<Settings>,
     tabs: Vec<Entity<Studio>>,
     active: Option<String>,
     pub recent: Vec<PathBuf>,
@@ -48,7 +53,7 @@ pub struct Workbench {
     saving: bool,
     restoring: bool,
     loading: HashSet<PathBuf>,
-    pending_open: Vec<PathBuf>,
+    pending_documents: Vec<PendingDocument>,
     session_error: Option<String>,
     recovery_warning: bool,
     notice: Option<Notice>,
@@ -88,7 +93,7 @@ impl Workbench {
                     s.notice = Some(Notice::Restored);
                     s.last_saved = true;
                 }
-                for path in std::mem::take(&mut s.pending_open) { s.open_path(path, window, cx); }
+                s.open_pending_documents(window, cx);
                 cx.notify();
             });
         }).detach();
@@ -104,7 +109,7 @@ impl Workbench {
         Self {
             language,
             paths,
-            defaults: Settings::default(),
+            defaults: None,
             tabs: Vec::new(),
             active: None,
             recent: Vec::new(),
@@ -118,7 +123,7 @@ impl Workbench {
             saving: false,
             restoring: true,
             loading: HashSet::new(),
-            pending_open: Vec::new(),
+            pending_documents: Vec::new(),
             session_error: None,
             recovery_warning: false,
             notice: None,
@@ -136,8 +141,33 @@ impl Workbench {
             Language::English => en,
         }
     }
-    pub fn configure(&mut self, settings: &Settings, _: &mut Window, _: &mut Context<Self>) {
-        self.defaults = settings.clone();
+    pub fn configure(
+        &mut self,
+        settings: Option<&Settings>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(settings) = settings {
+            self.defaults = Some(settings.clone());
+        } else {
+            // An unavailable service still permits local editing and preview.
+            self.defaults.get_or_insert_with(Settings::default);
+        }
+        self.open_pending_documents(window, cx);
+    }
+    fn document_defaults(&self) -> Option<&Settings> {
+        self.defaults.as_ref().filter(|_| !self.restoring)
+    }
+    fn open_pending_documents(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.document_defaults().is_none() {
+            return;
+        }
+        for document in std::mem::take(&mut self.pending_documents) {
+            match document {
+                PendingDocument::File(path) => self.open_path(path, window, cx),
+                PendingDocument::NewDesign => self.new_design(window, cx),
+            }
+        }
     }
     pub fn set_language(&mut self, language: Language, cx: &mut Context<Self>) {
         self.language = language;
@@ -319,10 +349,11 @@ impl Workbench {
                 }
             })
             .collect();
-        if self.restoring || !self.loading.is_empty() || !pending.is_empty() {
+        let opening = !self.loading.is_empty() || !self.pending_documents.is_empty();
+        if self.restoring || opening || !pending.is_empty() {
             let detail = if self.restoring {
                 self.t("正在恢复工作区", "Restoring workspace").to_string()
-            } else if !self.loading.is_empty() {
+            } else if opening {
                 self.t("正在打开文件", "Opening files").to_string()
             } else {
                 pending.join(", ")
@@ -353,10 +384,11 @@ impl Workbench {
         }
     }
     pub fn new_design(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.restoring {
+        let Some(defaults) = self.document_defaults() else {
+            self.pending_documents.push(PendingDocument::NewDesign);
             return;
-        }
-        self.insert(Draft::new(self.defaults.clone()), window, cx);
+        };
+        self.insert(Draft::new(defaults.clone()), window, cx);
         self.changed(cx);
     }
     pub fn open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -384,10 +416,10 @@ impl Workbench {
         .detach();
     }
     pub fn open_path(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
-        if self.restoring {
-            self.pending_open.push(path);
+        let Some(settings) = self.document_defaults().cloned() else {
+            self.pending_documents.push(PendingDocument::File(path));
             return;
-        }
+        };
         let path = session::canonical_path(&path);
         if let Some(tab) = self
             .tabs
@@ -402,7 +434,6 @@ impl Workbench {
             return;
         }
         let target = path.clone();
-        let settings = self.defaults.clone();
         let read = cx.background_executor().spawn(async move {
             let bytes = document::read_input(&target)?;
             let mut draft = Draft::new(settings);
@@ -713,6 +744,7 @@ impl Render for Workbench {
                     .label(match format {
                         OutputFormat::Pdf => self.t("导出 PDF", "Export PDF"),
                         OutputFormat::Png => self.t("导出 PNG", "Export PNG"),
+                        OutputFormat::Zpl => self.t("导出 ZPL", "Export ZPL"),
                     })
                     .disabled(active.as_ref().is_none_or(|t| !t.read(cx).can_export()))
                     .on_click(cx.listener(|s, _, w, cx| s.export(w, cx))),
@@ -811,7 +843,7 @@ impl Render for Workbench {
         } else {
             root=root.child(div().id("empty-workspace-scroll").flex_1().min_h_0().overflow_y_scroll().child(div().w_full().max_w(px(700.)).mx_auto().px_6().py_8().flex().flex_col().gap_5()
                 .child(div().text_2xl().font_weight(FontWeight::SEMIBOLD).child(self.t("从一个标签开始", "Start with a label")))
-                .child(div().text_sm().text_color(rgb(MUTED)).child(self.t("打开打印语言文件，或创建可视化设计。预览后导出 PDF / PNG。", "Open a printer-language file or create a visual design. Preview and export to PDF / PNG.")))
+                .child(div().text_sm().text_color(rgb(MUTED)).child(self.t("打开打印语言文件预览标签，或新建设计并导出 PDF、PNG 或 ZPL。", "Open a printer-language file to preview its labels, or create a design to export as PDF, PNG, or ZPL.")))
                 .child(div().flex().flex_wrap().gap_3().child(Button::new("empty-open").primary().icon(IconName::FolderOpen).label(self.t("打开文件…", "Open file…")).on_click(cx.listener(|s,_,w,cx|s.open(w,cx))))
                     .child(Button::new("empty-new").icon(IconName::Plus).label(self.t("新建设计", "New design")).disabled(self.restoring).on_click(cx.listener(|s,_,w,cx|s.new_design(w,cx)))))
                 .child(div().text_xs().text_color(rgb(MUTED)).child("ZPL · EPL · TSPL · CPCL · DPL · .labelize.json"))
