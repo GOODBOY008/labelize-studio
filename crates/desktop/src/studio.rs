@@ -18,13 +18,14 @@ use labelize_printer::{
 use labelize_printer_core::{
     design::{
         Alignment, Background, DesignDocument, DesignObject, HorizontalAlign, ImageFit, LayerOrder,
-        LineDirection, MatrixShape, ObjectKind, QrEcc, TextFont, VerticalAlign, TEMPLATE_VERSION,
+        LineDirection, MatrixShape, ObjectKind, QrEcc, TextFont, VerticalAlign,
     },
     document::{self, DocumentKind},
     paths::atomic_write,
     AppPaths, OutputFormat, RenderMode, Settings,
 };
 use std::{
+    collections::BTreeMap,
     path::PathBuf,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -35,6 +36,8 @@ use std::{
 
 #[path = "studio_properties.rs"]
 mod properties;
+#[path = "studio_template.rs"]
+mod template;
 
 #[derive(Clone, Copy)]
 struct ObjectDrag {
@@ -63,6 +66,7 @@ pub struct Studio {
     unsupported_bartender: bool,
     selected: Option<usize>,
     fields: Vec<Entity<InputState>>,
+    sample_inputs: BTreeMap<String, Entity<InputState>>,
     editor: Entity<InputState>,
     editable: bool,
     stale: bool,
@@ -162,6 +166,7 @@ impl Studio {
             unsupported_bartender,
             selected: draft.selected,
             fields,
+            sample_inputs: BTreeMap::new(),
             editor,
             editable,
             stale: !unsupported_bartender,
@@ -245,6 +250,9 @@ impl Studio {
         d.fingerprint = self.fingerprint.clone();
         d.kind = self.kind;
         d.design = self.design.clone();
+        if let Some(design) = &mut d.design {
+            self.read_samples(design, cx);
+        }
         d.source = if self.editable {
             self.editor.read(cx).value().as_bytes().to_vec()
         } else {
@@ -347,6 +355,10 @@ impl Studio {
             o.map_or(0, |o| o.style.pdf417_columns).to_string(),
             o.map_or(2, |o| o.style.pdf417_security).to_string(),
             o.map_or(128, |o| o.style.image_threshold).to_string(),
+            self.design
+                .as_ref()
+                .map(|d| d.printer_font.clone())
+                .unwrap_or_default(),
         ]
     }
     fn form_changed(&self, cx: &App) -> bool {
@@ -354,11 +366,18 @@ impl Studio {
             .iter()
             .zip(self.values())
             .any(|(f, v)| f.read(cx).value().as_str() != v)
+            || self.design.as_ref().is_some_and(|d| {
+                self.sample_inputs.iter().any(|(name, field)| {
+                    field.read(cx).value().as_str()
+                        != d.samples.get(name).map_or("", String::as_str)
+                })
+            })
             || (self.design.is_none()
                 && self.editable
                 && self.editor.read(cx).value().as_bytes() != self.source)
     }
     fn sync_form(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.sync_sample_inputs(window, cx);
         for (field, value) in self.fields.iter().zip(self.values()) {
             field.update(cx, |input, cx| input.set_value(value, window, cx));
         }
@@ -382,6 +401,10 @@ impl Studio {
                 .iter()
                 .map(|d| {
                     d.font.len()
+                        + d.samples
+                            .iter()
+                            .map(|(k, v)| k.len() + v.len())
+                            .sum::<usize>()
                         + d.objects
                             .iter()
                             .map(|o| o.image.len() + o.text.len())
@@ -448,11 +471,15 @@ impl Studio {
                     .parse()
                     .context("Image threshold must be 0–255")?;
             }
-            next.validate(settings.dpmm)?;
+            next.printer_font = self.fields[17].read(cx).value().to_string();
+            self.read_samples(&mut next, cx);
             if &next != design {
-                next.version = TEMPLATE_VERSION;
+                next.sync_variables()?;
+                next.validate(settings.dpmm)?;
                 self.remember();
                 self.design = Some(next);
+            } else {
+                next.validate(settings.dpmm)?;
             }
         } else if self.editable {
             self.source = self.editor.read(cx).value().as_bytes().to_vec();
@@ -464,7 +491,7 @@ impl Studio {
         self.apply_fields(cx)?;
         let bytes = if let Some(d) = &self.design {
             let mut portable = d.clone();
-            portable.version = TEMPLATE_VERSION;
+            portable.version = portable.portable_version();
             serde_json::to_vec_pretty(&portable)?
         } else {
             self.source.clone()
@@ -478,7 +505,7 @@ impl Studio {
         Ok(bytes)
     }
     fn fail(&mut self, error: impl std::fmt::Display, cx: &mut Context<Self>) {
-        self.notice = Some(Err(error.to_string()));
+        self.notice = Some(Err(format!("{error:#}")));
         cx.notify();
     }
 
@@ -487,12 +514,13 @@ impl Studio {
         let bytes = match self.payload(cx) {
             Ok(b) => b,
             Err(e) => {
-                self.preview_error = Some(e.to_string());
+                self.preview_error = Some(format!("{e:#}"));
                 cx.notify();
                 return;
             }
         };
         let revision = self.revision;
+        self.sync_sample_inputs(window, cx);
         let paths = self.paths.clone();
         let kind = self.kind;
         let settings = self.options.clone();
@@ -942,10 +970,16 @@ impl Studio {
         if self.selected_object().is_some_and(|o| o.style.locked) {
             return;
         }
+        if let Err(e) = self.apply_fields(cx) {
+            self.fail(e, cx);
+            return;
+        }
         self.remember();
         if let (Some(d), Some(i)) = (&mut self.design, self.selected) {
             if i < d.objects.len() {
                 d.objects.remove(i);
+                // Removing an object cannot introduce an invalid expression.
+                let _ = d.sync_variables();
             }
             self.selected =
                 (!d.objects.is_empty()).then_some(i.min(d.objects.len().saturating_sub(1)));
@@ -1059,7 +1093,8 @@ impl Studio {
             )
             .child(Input::new(&self.fields[index]).disabled(
                 self.loading
-                    || index >= 2 && self.selected_object().is_some_and(|o| o.style.locked),
+                    || (2..17).contains(&index)
+                        && self.selected_object().is_some_and(|o| o.style.locked),
             ))
     }
     fn selected_object(&self) -> Option<&DesignObject> {
@@ -1076,7 +1111,7 @@ impl Studio {
         self.apply_fields(cx)?;
         let mut next = self.design.clone().context("Open a design")?;
         let selected = edit(&mut next, self.selected.context("Select an object")?)?;
-        next.version = TEMPLATE_VERSION;
+        next.sync_variables()?;
         next.validate(self.options.dpmm)?;
         if self.design.as_ref() != Some(&next) {
             self.remember();
@@ -1339,9 +1374,28 @@ impl Studio {
                 .child(div().h(px(1.)).bg(rgb(BORDER)))
                 .child(self.object_properties(cx));
         }
+        if self
+            .design
+            .as_ref()
+            .is_some_and(|d| d.objects.iter().any(|o| o.variable))
+        {
+            content = content.child(self.field(17, self.t("打印机字体路径（可选）", "Printer font path (optional)")))
+                .child(div().text_xs().text_color(rgb(MUTED)).child(self.t(
+                    "可变中文使用设备字库，如 E:MYFONT.TTF。导入同款字体可在画布校样。",
+                    "For variable CJK text, enter the device font, e.g. E:MYFONT.TTF. Import the same font for the canvas.")));
+        }
         content = content
             .child(div().h(px(1.)).bg(rgb(BORDER)))
             .child(section(self.t("导出文件", "EXPORT")))
+            .when(self.design.is_some(), |panel| {
+                panel.child(
+                    Button::new("export-zpl-template")
+                        .small()
+                        .label(self.t("导出 ZPL 模板…", "Export ZPL template…"))
+                        .disabled(!self.can_export())
+                        .on_click(cx.listener(|s, _, w, cx| s.export_template(w, cx))),
+                )
+            })
             .child(
                 row().children(
                     [

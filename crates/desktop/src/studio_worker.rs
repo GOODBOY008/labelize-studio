@@ -7,7 +7,7 @@ use labelize_printer_core::{
 };
 use std::{
     fs,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -55,29 +55,58 @@ pub fn preview(
         .arg("--request")
         .arg(&request_path)
         .arg("--output")
-        .arg(directory.path())
+        .arg(directory.path());
+    run_renderer(command, &log, Some(&cancelled))?;
+    let pages = serde_json::from_slice(&fs::read(directory.path().join("pages.json"))?)?;
+    Ok(Preview { directory, pages })
+}
+
+pub fn export_template(paths: &AppPaths, bytes: Vec<u8>, dpmm: i32, output: &Path) -> Result<()> {
+    let directory = tempfile::Builder::new()
+        .prefix("template-")
+        .tempdir_in(&paths.root)?;
+    let input = directory.path().join("design.json");
+    atomic_write(&input, &bytes)?;
+    let mut command = Command::new(platform::sibling_binary("labelize-printer-daemon")?);
+    command
+        .arg("--data-dir")
+        .arg(&paths.root)
+        .arg("export-template")
+        .arg(input)
+        .arg("--dpmm")
+        .arg(dpmm.to_string())
+        .arg("--output")
+        .arg(output);
+    run_renderer(command, &directory.path().join("renderer.log"), None)
+}
+
+fn run_renderer(mut command: Command, log: &Path, cancel: Option<&AtomicBool>) -> Result<()> {
+    command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(fs::File::create(&log)?);
+        .stderr(fs::File::create(log)?);
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
         command.creation_flags(0x08000000);
     }
-    let child = command.spawn().context(
-        "Cannot start the preview renderer. Install matching desktop and daemon versions.",
-    )?;
+    let child = command
+        .spawn()
+        .context("Cannot start the renderer. Install matching desktop and daemon versions.")?;
     let mut guard = ChildGuard(child);
     let child = &mut guard.0;
     let start = Instant::now();
     loop {
-        anyhow::ensure!(!cancelled.load(Ordering::Acquire), "Preview cancelled");
+        anyhow::ensure!(
+            !cancel.is_some_and(|c| c.load(Ordering::Acquire)),
+            "Preview cancelled"
+        );
         if let Some(status) = child.try_wait()? {
             if !status.success() {
                 bail!(
                     "{}",
-                    fs::read_to_string(&log)
-                        .unwrap_or_else(|_| format!("Preview renderer exited: {status}"))
+                    fs::read_to_string(log)
+                        .unwrap_or_else(|_| format!("Renderer exited: {status}"))
                 );
             }
             break;
@@ -85,12 +114,11 @@ pub fn preview(
         if start.elapsed() > Duration::from_secs(WORKER_TIMEOUT_SECONDS) {
             let _ = child.kill();
             let _ = child.wait();
-            bail!("Preview timed out");
+            bail!("Renderer timed out");
         }
         thread::sleep(Duration::from_millis(40));
     }
-    let pages = serde_json::from_slice(&fs::read(directory.path().join("pages.json"))?)?;
-    Ok(Preview { directory, pages })
+    Ok(())
 }
 
 pub fn submit(

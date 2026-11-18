@@ -17,7 +17,7 @@ use std::{
 };
 
 /// First nine fields retain their version-1 order for existing local drafts.
-pub const DESIGN_FIELD_COUNT: usize = 17;
+pub const DESIGN_FIELD_COUNT: usize = 18;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Draft {
@@ -272,7 +272,7 @@ impl SessionStore {
                         .is_some_and(|d| index < d.objects.len())
                 });
                 ensure!(
-                    [0, 9, DESIGN_FIELD_COUNT].contains(&draft.fields.len()),
+                    [0, 9, 17, DESIGN_FIELD_COUNT].contains(&draft.fields.len()),
                     "Invalid draft fields"
                 );
                 draft.zoom = draft
@@ -312,9 +312,13 @@ mod tests {
         code.style.rotation = 90;
         code.style.matrix_shape = MatrixShape::Rectangle;
         code.style.visible = false;
-        code.style.locked = true;
         code.style.module_mm = 0.5;
         draft.design.as_mut().unwrap().objects.push(code);
+        let design = draft.design.as_mut().unwrap();
+        design.set_variable(1, true).unwrap();
+        design.objects[1].style.locked = true;
+        design.samples.insert("field_2".into(), "试样-002".into());
+        design.printer_font = "E:MYFONT.TTF".into();
         draft.selected = Some(1);
         draft.fields = vec![String::new(); DESIGN_FIELD_COUNT];
         draft.fields[12] = "-".into();
@@ -335,6 +339,27 @@ mod tests {
         assert_eq!(restored.tabs[0].selected, Some(1));
         assert_eq!(restored.tabs[0].fields[12], "-");
         assert!(restored.tabs[0].dirty);
+    }
+    #[test]
+    fn previous_seventeen_field_drafts_still_restore() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = SessionStore::new(temp.path().into());
+        let mut draft = Draft::new(Settings::default());
+        draft.fields = vec![String::new(); 17];
+        draft.fields[8] = "{{literal}}".into();
+        store
+            .save(
+                1,
+                Workspace {
+                    tabs: vec![draft],
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let (workspace, warnings) = store.load();
+        assert!(warnings.is_empty());
+        assert_eq!(workspace.tabs[0].fields[8], "{{literal}}");
+        assert_eq!(workspace.tabs[0].design.as_ref().unwrap().version, 2);
     }
     #[test]
     fn restores_invalid_edits_binary_data_and_independent_tab_settings() {

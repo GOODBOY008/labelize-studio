@@ -129,6 +129,8 @@ Version **0.4.0** expands the designer to 15 object types: text, rectangles, ell
 
 In the development build, select the target printer's resolution under **Page settings**, choose **ZPL** in the inspector, then click **Export ZPL**. Open the saved `.zpl` from **Jobs** or reopen it in the workspace at the same resolution. The file embeds the design as a monochrome graphic. Keep the `.labelize.json` template to edit individual objects.
 
+To print different data from your own application, select a text or barcode object, choose **Bind variables**, and enter a field such as `{{order_no}}`. **Export ZPL template…** saves a `.tpl.zpl` file that your application can fill and send through its usual printer connection. The same order number can appear in text, a linear barcode and a QR code. Try the [editable shipping label](examples/java/shipping.labelize.json) and [JDK-only integration example](docs/designer.md#print-business-data-from-an-application).
+
 Opening an existing printer-language file shows its source and preview. The embedded Labelize engine determines which commands are supported. Studio expands ZPL `^PQ` copies once. Other languages use the engine's copy behavior.
 
 | Shortcut | Action |

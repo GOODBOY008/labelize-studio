@@ -109,7 +109,43 @@ impl Studio {
                     }))
             })));
         if o.kind.has_content() {
-            content = content.child(self.field(8, self.t("内容", "Content")));
+            content = content
+                .child(
+                    Button::new("bind-variable")
+                        .small()
+                        .selected(o.variable)
+                        .disabled(style.locked)
+                        .label(self.t("绑定变量", "Bind variables"))
+                        .on_click(cx.listener(|s, _, w, cx| {
+                            if let Err(e) = s.edit_design(w, cx, |d, i| {
+                                d.set_variable(i, !d.objects[i].variable)?;
+                                Ok(i)
+                            }) {
+                                s.fail(format!("{e:#}"), cx);
+                            }
+                        })),
+                )
+                .child(self.field(
+                    8,
+                    if o.variable {
+                        self.t("模板内容 · {{order_no}}", "Template content · {{order_no}}")
+                    } else {
+                        self.t("内容", "Content")
+                    },
+                ));
+            if o.variable {
+                content = content.child(section(self.t("共享样例值", "SHARED SAMPLE VALUES")));
+                for (name, input) in &self.sample_inputs {
+                    content = content.child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .child(div().text_xs().child(name.clone()))
+                            .child(Input::new(input).disabled(self.loading)),
+                    );
+                }
+            }
         }
         if o.kind == ObjectKind::Text
             || (o.kind.is_barcode() && style.human_readable && !o.kind.is_matrix())

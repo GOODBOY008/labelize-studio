@@ -113,6 +113,14 @@ Local checks on 2026-11-10 used the current macOS 27.2 Apple Silicon host and an
 
 ## Expanded designer (unreleased source)
 
+### Variable ZPL templates
+
+Local checks on 2026-11-18 used macOS arm64 and JDK 17.0.14. The native workspace opened the shipping design and generated an 800 × 400 preview. A GPUI workflow check exercised binding, renaming, shared sample editing, undo, redo, serialization and the recovery snapshot. Poppler extracted the sample order number and Chinese product name from a vector PDF with a local proofing font.
+
+The Java example filled two records for each of the ten native barcode types at 8 and 12 dots/mm. An independent decoder recovered the expected values in all 40 cases. The example and tests cover leading zeros, command characters, literal braces, missing fields and invalid GTIN digits. Physical printer font, paper quiet zones and scanner acceptance remain pending. The test host had only the local Labelize virtual queue. [Reproducible Java check](development.md#command-line-use)
+
+### Static designer
+
 Local checks on 2026-11-10 used macOS 27.2 Apple Silicon and a separate app/data directory under `.cache/designer-qa`. This milestone is not yet in an installer or a GitHub Actions run. The installed application and system queue were left unchanged.
 
 - **Core rendering:** All 20 core tests passed on native macOS and in the Debian 12 amd64 build container. Seven new integration tests include 80 barcode decoder round trips (ten formats × two resolutions × four rotations), strict content/check-digit validation, error correction and module settings, text layout, image fitting, shape pixels, opaque layering, visibility, rotated alignment, locking, and version-2 serialization. Decoder input is the rendered object rectangle, including quiet zones and captions, rather than a whole-page search. PNG pixels and the PDF's embedded image were compared with preview pixels.

@@ -27,33 +27,43 @@ pub(super) fn document(design: &DesignDocument, dpmm: i32) -> Result<GrayImage> 
         .enumerate()
         .filter(|(_, o)| o.style.visible)
     {
-        let mut pixels = object_pixels(object, design, dpmm)
+        paint(&mut canvas, object, design, dpmm)
             .with_context(|| format!("Object {} ({})", i + 1, object.style.name))?;
-        if object.style.background == Background::Black {
-            imageops::invert(&mut pixels);
-        }
-        let pixels = match object.style.rotation {
-            90 => imageops::rotate90(&pixels),
-            180 => imageops::rotate180(&pixels),
-            270 => imageops::rotate270(&pixels),
-            _ => pixels,
-        };
-        let x = (object.x * dpmm as f64).round() as u32;
-        let y = (object.y * dpmm as f64).round() as u32;
-        // Compose before bit packing: an opaque background must not erase the
-        // padding bits at the right edge of another object.
-        for (px, py, pixel) in pixels.enumerate_pixels() {
-            if x + px < canvas.width() && y + py < canvas.height() {
-                let target = canvas.get_pixel_mut(x + px, y + py);
-                target[0] = if object.style.background == Background::Transparent {
-                    target[0].min(pixel[0])
-                } else {
-                    pixel[0]
-                };
-            }
-        }
     }
     Ok(canvas)
+}
+
+pub(super) fn paint(
+    canvas: &mut GrayImage,
+    object: &DesignObject,
+    design: &DesignDocument,
+    dpmm: i32,
+) -> Result<()> {
+    let mut pixels = object_pixels(object, design, dpmm)?;
+    if object.style.background == Background::Black {
+        imageops::invert(&mut pixels);
+    }
+    let pixels = match object.style.rotation {
+        90 => imageops::rotate90(&pixels),
+        180 => imageops::rotate180(&pixels),
+        270 => imageops::rotate270(&pixels),
+        _ => pixels,
+    };
+    let x = (object.x * dpmm as f64).round() as u32;
+    let y = (object.y * dpmm as f64).round() as u32;
+    // Compose before bit packing: an opaque background must not erase the
+    // padding bits at the right edge of another object.
+    for (px, py, pixel) in pixels.enumerate_pixels() {
+        if x + px < canvas.width() && y + py < canvas.height() {
+            let target = canvas.get_pixel_mut(x + px, y + py);
+            target[0] = if object.style.background == Background::Transparent {
+                target[0].min(pixel[0])
+            } else {
+                pixel[0]
+            };
+        }
+    }
+    Ok(())
 }
 
 pub(super) fn font(design: &DesignDocument, face: TextFont) -> Result<FontRef<'_>> {
