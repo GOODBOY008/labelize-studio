@@ -2,7 +2,7 @@
 
 [README](../README.md) · [Architecture](architecture.md) · [Acceptance](acceptance.md)
 
-This guide describes the expanded designer in **Labelize Studio v0.4.0**. Existing Labelize Printer templates remain compatible.
+The visual designer shipped in **Labelize Studio v0.4.0**. ZPL template export requires a development build with variable binding. Existing Labelize Printer templates remain compatible.
 
 Choose **Workspace → New design**, or open the [showcase template](../examples/designer-showcase.labelize.json). Objects are listed from front to back. Select an object to see the properties appropriate to its type. Preview and PDF/PNG export use the same rendering rules.
 
@@ -45,7 +45,7 @@ EAN-13, EAN-8, and UPC-A accept the full number or the body without its final ch
 
 ## Saving and compatibility
 
-Templates embed images and the document font and remain self-contained. The expanded designer reads version 1 and version 2 templates; saving writes version 2. Earlier app versions cannot read version 2, so keep a copy of a version-1 file if you need to reopen it with an older app. Existing version-1 defaults preserve their previous rendered appearance.
+Templates embed images and the document font. Studio reads versions 1, 2 and 3. Saving a static design writes version 2. Binding variables uses version 3, which requires a Studio build with variable support. Text in an existing design, including literal double braces, stays literal until you enable binding for that object.
 
 PDF combines the document pages into one file. PNG saves one image per page. Exports capture the content and options when submitted and continue in the background after a tab or window closes.
 
@@ -54,6 +54,28 @@ PDF combines the document pages into one file. PNG saves one image per page. Exp
 Select the target printer's **8 dpmm** or **12 dpmm** resolution under **Page settings**. In **Export**, choose **ZPL** and the output folder, then click **Export ZPL**. The completed job contains a single `.zpl` file. To preview it again in Studio, open it as a label file and select the same resolution.
 
 The exporter rounds the outer label dimensions up to whole printer dots and embeds the visible layers as a monochrome graphic. Text, imported fonts, and barcodes are rendered into that graphic. Keep the `.labelize.json` template for editing. The minimum ZPL print width is two dots. [Zebra print-width reference](https://cpws.zebra.com/cpws/docs/zpl/PW_Command.pdf)
+
+### Print business data from an application
+
+1. Open the [shipping design](../examples/java/shipping.labelize.json), or choose **New design**. Select a text object or any of the ten barcodes and enable **Bind variables**. Enter `Order: {{order_no}}` for text or `{{order_no}}` for the barcode. Names are case-sensitive and use ASCII letters, digits and underscores. Start with a letter or underscore.
+2. Enter a **Shared sample value** for each name. Reusing a name in another object links both objects to the same value. Use the longest expected record for layout. The canvas and ordinary PDF, PNG and bitmap ZPL exports show the samples. **Save** retains expressions and samples for future editing.
+3. Select the printer's **8** or **12 dpmm** resolution. For variable Chinese text, set **Printer font path** to a font installed on that printer, for example `E:MYFONT.TTF`. Import the same font file into Studio for local proofing. The device loads its own font when it prints. [Zebra ZPL programming guide](https://cpws.zebra.com/cpws/docs/zpl/zpl-zbi2-pm-en.pdf)
+4. Choose **Export ZPL template…**. Bundle the resulting `.tpl.zpl` with the application. Native text and barcode fields carry placeholders. Fixed artwork travels in the same file. The template fixes field positions, text sizes and barcode modules at export time. Longer records may extend beyond the area reserved on the design.
+
+The [Java fill function](../examples/java/ZplTemplate.java) accepts a template string and a map of string values and returns print-ready bytes. It preserves leading zeros, validates retail check digits and escapes field data for the relevant ZPL command. A missing variable or invalid barcode raises an `IllegalArgumentException` naming the field. The function reads placeholders once, so the characters `{{...}}` in a business value print literally. Supply these bytes to the application's existing printer transport.
+
+For another host language, each `^FXLabelize field <kind>^FS` comment identifies the following native field. Its data after `^FH^FD` contains UTF-8 literal bytes encoded as `_HH` and named `{{slots}}`. QR also has an error-correction and input-mode prefix. Assemble each complete field, apply the encoding for its barcode or text type, and emit field-escaped data. The Java implementation shows the rules for all ten codes and their captions.
+
+Run the [order example](../examples/java/OrderLabel.java) with JDK 17 or newer. It loads the supplied 8 dpmm template from the classpath. From the repository root, run:
+
+```sh
+cd examples/java
+javac -encoding UTF-8 OrderLabel.java ZplTemplate.java
+java OrderLabel SO-00123 "Thermal labels" order-123.zpl
+java OrderLabel SO-00456 "Return labels" order-456.zpl
+```
+
+Use transparent foreground artwork over a variable. An opaque layer above a variable can erase data-dependent ink and will be identified during export. Use 0° rotation for native QR and top alignment for wrapped variable text. **Document** selects the configured printer font for variable text. A printed sample verifies the actual font, quiet zones and scanner performance on a given model and firmware.
 
 ## Rendering quality (unreleased)
 

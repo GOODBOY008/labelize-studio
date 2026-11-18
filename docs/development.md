@@ -82,6 +82,8 @@ Since v0.2.0, the daemon accepts ZPL, EPL, TSPL/TSC, CPCL, DPL, and `.labelize.j
 
 In a development build, `submit --format` overrides the output format for one job. Choose `pdf` or `png` for any label document, or `zpl` for a design template. The job uses the configured output directory and resolution.
 
+To export a host-filled template directly from a design, run `target/debug/labelize-printer-daemon export-template examples/java/shipping.labelize.json --dpmm 8 --output shipping.tpl.zpl`. The desktop uses this same renderer in a separate process. With a JDK installed, `cargo test -p labelize-printer-core --locked --test zpl_templates -- --include-ignored` compiles the Java integration example, fills two records at both resolutions, and independently decodes all ten barcode types.
+
 | Command | Behavior |
 | --- | --- |
 | `settings` | Print settings as JSON. |

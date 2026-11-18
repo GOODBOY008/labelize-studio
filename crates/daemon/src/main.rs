@@ -54,6 +54,14 @@ enum Action {
         #[arg(long)]
         output: PathBuf,
     },
+    /// Export a portable design as a host-filled ZPL template.
+    ExportTemplate {
+        input: PathBuf,
+        #[arg(long)]
+        output: PathBuf,
+        #[arg(long)]
+        dpmm: i32,
+    },
     Status,
     Refresh,
     Submit {
@@ -131,6 +139,18 @@ fn run() -> Result<()> {
     };
     let (request, wait) = match cli.command {
         Action::Serve => return serve(paths),
+        Action::ExportTemplate {
+            input,
+            output,
+            dpmm,
+        } => {
+            let design: design::DesignDocument =
+                serde_json::from_slice(&document::read_input(&input)?)?;
+            if output.exists() && fs::canonicalize(&output)? == fs::canonicalize(&input)? {
+                bail!("Choose a different path from the editable design");
+            }
+            return atomic_write(&output, design.to_zpl_template(dpmm)?.as_bytes());
+        }
         Action::Preview { request, output } => {
             let request: document::PreviewRequest =
                 serde_json::from_slice(&document::read_input(&request)?)?;

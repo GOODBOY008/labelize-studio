@@ -54,6 +54,9 @@ jobs:
       - run: bash scripts/build/native.sh release
       - run: cargo test -p labelize-printer-updater --release --locked
       - run: cargo test -p labelize-printer-core --release --locked
+      - name: Verify Java-filled ZPL with independent barcode decoders
+        if: matrix.arch == 'arm64'
+        run: PATH="$JAVA_HOME_17_arm64/bin:$PATH" cargo test -p labelize-printer-core --release --locked --test zpl_templates -- --ignored
       - run: cargo test -p labelize-printer --lib --release --locked
       - run: python3 scripts/test/update-smoke.py --profile release
       - run: python3 scripts/test/smoke.py --profile release

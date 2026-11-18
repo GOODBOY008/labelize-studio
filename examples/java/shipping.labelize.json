@@ -1,0 +1,26 @@
+{
+  "version": 3,
+  "width_mm": 100,
+  "height_mm": 50,
+  "samples": { "order_no": "SO-00123", "product": "Thermal labels" },
+  "objects": [
+    {
+      "kind": "text", "x": 4, "y": 4, "width": 64, "height": 8,
+      "text": "Order: {{order_no}}", "variable": true, "font_mm": 4, "stroke_mm": 0.5
+    },
+    {
+      "kind": "text", "x": 4, "y": 14, "width": 64, "height": 8,
+      "text": "{{product}}", "variable": true, "font_mm": 4, "stroke_mm": 0.5
+    },
+    {
+      "kind": "code128", "x": 4, "y": 27, "width": 62, "height": 16,
+      "text": "{{order_no}}", "variable": true, "font_mm": 3, "stroke_mm": 0.5,
+      "style": { "background": "white", "module_mm": 0.25 }
+    },
+    {
+      "kind": "qr", "x": 71, "y": 12, "width": 25, "height": 25,
+      "text": "{{order_no}}", "variable": true, "font_mm": 3, "stroke_mm": 0.5,
+      "style": { "background": "white", "module_mm": 0.50 }
+    }
+  ]
+}

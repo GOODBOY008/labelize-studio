@@ -8,13 +8,15 @@ use labelize::elements::{
     label_position::LabelPosition,
 };
 use serde::{Deserialize, Serialize};
-use std::io::Cursor;
+use std::{collections::BTreeMap, io::Cursor};
 
 mod render;
 mod scene;
 mod symbols;
+mod template;
+mod zpl_template;
 
-pub const TEMPLATE_VERSION: u32 = 2;
+pub const TEMPLATE_VERSION: u32 = 3;
 
 #[derive(Clone, Copy)]
 pub enum Alignment {
@@ -228,6 +230,9 @@ pub struct DesignObject {
     pub width: f64,
     pub height: f64,
     pub text: String,
+    /// Only explicitly bound fields interpret named placeholders in their content.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub variable: bool,
     pub font_mm: f64,
     pub stroke_mm: f64,
     #[serde(default)]
@@ -264,6 +269,7 @@ impl DesignObject {
                 _ => "Labelize",
             }
             .into(),
+            variable: false,
             font_mm: 4.,
             stroke_mm: 0.5,
             style: ObjectStyle {
@@ -293,6 +299,10 @@ pub struct DesignDocument {
     pub width_mm: f64,
     pub height_mm: f64,
     pub objects: Vec<DesignObject>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub samples: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub printer_font: String,
     /// Optional user-supplied font embedded for portable CJK/non-Latin text.
     #[serde(default, skip_serializing_if = "Vec::is_empty", with = "base64_bytes")]
     pub font: Vec<u8>,
@@ -301,10 +311,12 @@ pub struct DesignDocument {
 impl Default for DesignDocument {
     fn default() -> Self {
         Self {
-            version: TEMPLATE_VERSION,
+            version: 2,
             width_mm: 102.,
             height_mm: 152.,
             objects: vec![DesignObject::new(ObjectKind::Text)],
+            samples: BTreeMap::new(),
+            printer_font: String::new(),
             font: Vec::new(),
         }
     }
@@ -361,9 +373,10 @@ impl DesignDocument {
     }
     pub fn validate(&self, dpmm: i32) -> Result<()> {
         ensure!(
-            [1, TEMPLATE_VERSION].contains(&self.version),
+            (1..=TEMPLATE_VERSION).contains(&self.version),
             "Unsupported template version"
         );
+        self.validate_bindings()?;
         ensure!(
             [8, 12].contains(&dpmm),
             "Resolution must be 8 or 12 dots/mm"
@@ -445,7 +458,7 @@ impl DesignDocument {
 
     pub fn to_label(&self, dpmm: i32) -> Result<labelize::LabelInfo> {
         self.validate(dpmm)?;
-        let pixels = render::document(self, dpmm)?;
+        let pixels = render::document(self.with_samples()?.as_ref(), dpmm)?;
         let mut label = labelize::LabelInfo {
             label_width_mm: Some(self.width_mm),
             label_height_mm: Some(self.height_mm),
@@ -465,11 +478,12 @@ impl DesignDocument {
         antialias: bool,
     ) -> Result<GrayImage> {
         self.validate(dpmm)?;
+        let design = self.with_samples()?;
         if mode == crate::RenderMode::Vector {
-            scene::Scene::new(self, dpmm)?.raster(scale, antialias)
+            scene::Scene::new(&design, dpmm)?.raster(scale, antialias)
         } else {
             ensure!(scale == 1, "Raster output does not support PNG scaling");
-            let mut pixels = render::document(self, dpmm)?;
+            let mut pixels = render::document(&design, dpmm)?;
             let size = (
                 render::canvas_extent(self.width_mm, dpmm),
                 render::canvas_extent(self.height_mm, dpmm),
@@ -489,7 +503,8 @@ impl DesignDocument {
     }
 
     pub fn vector_pdf(&self, dpmm: i32) -> Result<Vec<u8>> {
-        scene::Scene::new(self, dpmm)?.pdf()
+        self.validate(dpmm)?;
+        scene::Scene::new(self.with_samples()?.as_ref(), dpmm)?.pdf()
     }
 
     pub(crate) fn zpl_pixels(&self, dpmm: i32) -> Result<GrayImage> {
@@ -503,6 +518,10 @@ impl DesignDocument {
 
     pub fn to_zpl(&self, dpmm: i32) -> Result<String> {
         let pixels = self.zpl_pixels(dpmm)?;
+        Self::bitmap_zpl(pixels, dpmm)
+    }
+
+    fn bitmap_zpl(pixels: GrayImage, dpmm: i32) -> Result<String> {
         let (width, height) = pixels.dimensions();
         let image = image::DynamicImage::ImageLuma8(pixels).into_rgba8();
         let options = labelize::ReverseOptions {
@@ -511,12 +530,13 @@ impl DesignDocument {
         };
         let mut zpl = labelize::image_to_zpl(&image, &options)?;
         // Matching base/target values reset any previous DPI conversion to one dot per pixel.
-        let base_dpi = if dpmm == 8 { 200 } else { 300 };
-        zpl.insert_str(
-            "^XA".len(),
-            &format!("\n^MUD,{base_dpi},{base_dpi}\n^PW{width}\n^LL{height}\n^LH0,0"),
-        );
+        zpl.insert_str("^XA".len(), &Self::zpl_page(width, height, dpmm));
         Ok(zpl)
+    }
+
+    fn zpl_page(width: u32, height: u32, dpmm: i32) -> String {
+        let dpi = if dpmm == 8 { 200 } else { 300 };
+        format!("\n^MUD,{dpi},{dpi}\n^PW{width}\n^LL{height}\n^LH0,0")
     }
 }
 
