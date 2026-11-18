@@ -1,3 +1,5 @@
 vendor/** linguist-vendored
 # Preserve indentation in upstream Metal shader sources verbatim.
 vendor/gpui/** whitespace=-space-before-tab
+# Match the bytes written by the ZPL template exporter on every platform.
+*.tpl.zpl text eol=lf
