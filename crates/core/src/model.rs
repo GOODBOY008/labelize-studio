@@ -13,6 +13,7 @@ pub const WORKER_TIMEOUT_SECONDS: u64 = 300;
 pub enum OutputFormat {
     Pdf,
     Png,
+    Zpl,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -97,6 +98,16 @@ impl Settings {
             bail!("Choose distinct RAW and IPP ports between 1024 and 65535");
         }
         Ok(())
+    }
+
+    /// A missing document kind denotes the system print queue.
+    pub fn validate_for(&self, document: Option<crate::document::DocumentKind>) -> Result<()> {
+        if self.format == OutputFormat::Zpl
+            && document != Some(crate::document::DocumentKind::Design)
+        {
+            bail!("ZPL export requires a design document");
+        }
+        self.validate()
     }
 }
 

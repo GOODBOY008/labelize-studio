@@ -1,8 +1,8 @@
 //! File parsing and rendering shared by previews and export jobs.
 use super::{read_input, DocumentKind, PreviewPage, PreviewRequest};
 use crate::{
-    design::DesignDocument, output::RenderedPage, validate_media, validate_pixels, RenderMode,
-    Settings, MAX_INPUT_BYTES, MAX_PAGES,
+    design::DesignDocument, output::RenderedPage, validate_media, validate_pixels, OutputFormat,
+    RenderMode, Settings, MAX_INPUT_BYTES, MAX_PAGES,
 };
 use anyhow::{ensure, Result};
 use labelize::{DrawerOptions, LabelInfo, OutputOptions, ZplParseOptions, ZplParser};
@@ -118,13 +118,15 @@ pub fn render(
     settings: &Settings,
     mut consume: impl FnMut(RenderedPage) -> Result<()>,
 ) -> Result<()> {
-    settings.validate()?;
+    settings.validate_for(Some(kind))?;
     ensure!(
         !bytes.is_empty() && bytes.len() as u64 <= MAX_INPUT_BYTES,
         "Input must be 1 byte to 64 MiB"
     );
     if kind == DocumentKind::Design
-        && (settings.antialias || settings.render_mode == RenderMode::Vector)
+        && (settings.format == OutputFormat::Zpl
+            || settings.antialias
+            || settings.render_mode == RenderMode::Vector)
     {
         let design: DesignDocument = serde_json::from_slice(bytes)?;
         design.validate(settings.dpmm)?;
@@ -133,12 +135,16 @@ pub fn render(
             (design.width_mm * settings.dpmm as f64).ceil() as u32 * scale,
             (design.height_mm * settings.dpmm as f64).ceil() as u32 * scale,
         )?;
-        let pixels = design.render_pixels(
-            settings.dpmm,
-            settings.render_mode,
-            scale,
-            settings.antialias,
-        )?;
+        let pixels = if settings.format == OutputFormat::Zpl {
+            design.zpl_pixels(settings.dpmm)?
+        } else {
+            design.render_pixels(
+                settings.dpmm,
+                settings.render_mode,
+                scale,
+                settings.antialias,
+            )?
+        };
         return consume(RenderedPage {
             pixels,
             width_mm: design.width_mm,

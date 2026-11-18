@@ -39,6 +39,7 @@ Captured on macOS from development commit `7155d05` using synthetic sample data.
 | PDF/PNG export | Save all pages as one raster PDF or one PNG per page. | v0.2.0 |
 | Rendering quality | Optional antialiasing, native vector PDF, and 1–4× PNG rendering from a vector scene. | v0.5.0 |
 | Portable templates | Save editable `.labelize.json` templates with embedded images and imported fonts. | v0.2.0 |
+| ZPL design export | Export the design as a monochrome graphic for an 8 or 12 dots/mm ZPL printer. | Unreleased |
 | Virtual printer | Select a local system printer and capture jobs as PDF or PNG while the desktop window is closed. | v0.1.2 |
 | Job management | Choose an output folder, inspect results, open saved files, and retry failed jobs. | v0.1.2 |
 | Software updates | Stable-release checks, verified full installers, and package-manager-aware handoff. | v0.4.0 |
@@ -126,7 +127,9 @@ Version **0.4.0** expands the designer to 15 object types: text, rectangles, ell
 
 **Save** writes back to the source file, asking for a path only for an untitled document. **Save as** is in the overflow menu. A design is saved as a portable `.labelize.json` template containing its objects, images, and imported font. Reopen the file to continue editing. For Chinese or other text outside the default font's coverage, import a compatible TrueType/OpenType font of up to 32 MiB. Missing glyphs, overflowing text, and undersized barcodes produce errors. Images are composited over white and rendered in monochrome.
 
-Existing printer-language files remain source documents; they are not reconstructed as editable design objects. Designs currently export to PDF/PNG, with no direct physical-printer submission or printer-language code export. Supported commands and copy semantics follow the embedded Labelize engine; the integration expands ZPL `^PQ` copies once and does not add copy expansion for other languages.
+In the development build, select the target printer's resolution under **Page settings**, choose **ZPL** in the inspector, then click **Export ZPL**. Open the saved `.zpl` from **Jobs** or reopen it in the workspace at the same resolution. The file embeds the design as a monochrome graphic. Keep the `.labelize.json` template to edit individual objects.
+
+Opening an existing printer-language file shows its source and preview. The embedded Labelize engine determines which commands are supported. Studio expands ZPL `^PQ` copies once. Other languages use the engine's copy behavior.
 
 | Shortcut | Action |
 | --- | --- |

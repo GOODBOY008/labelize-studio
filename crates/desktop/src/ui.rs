@@ -289,6 +289,8 @@ impl PrinterApp {
                 if self.connection_error.as_ref() == Some(&error) {
                     return;
                 }
+                self.studio
+                    .update(cx, |studio, cx| studio.configure(None, window, cx));
                 self.connection_error = Some(error);
             }
             Event::Completed {
@@ -332,7 +334,7 @@ impl PrinterApp {
         cx: &mut Context<Self>,
     ) {
         self.studio.update(cx, |studio, cx| {
-            studio.configure(&snapshot.settings, window, cx)
+            studio.configure(Some(&snapshot.settings), window, cx)
         });
         let first = self.snapshot.is_none();
         if first && self.page == Page::Setup && snapshot.settings.setup_complete {

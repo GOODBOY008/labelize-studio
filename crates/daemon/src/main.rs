@@ -58,6 +58,9 @@ enum Action {
     Refresh,
     Submit {
         path: PathBuf,
+        /// Choose pdf or png for this job, or zpl for a design.
+        #[arg(long, value_parser = parse_output_format)]
+        format: Option<OutputFormat>,
         #[arg(long)]
         wait: bool,
         #[arg(long, default_value = "Label print job")]
@@ -104,6 +107,15 @@ enum Action {
     },
 }
 
+fn parse_output_format(value: &str) -> Result<OutputFormat> {
+    match value {
+        "pdf" => Ok(OutputFormat::Pdf),
+        "png" => Ok(OutputFormat::Png),
+        "zpl" => Ok(OutputFormat::Zpl),
+        _ => bail!("Choose pdf, png, or zpl"),
+    }
+}
+
 fn main() {
     if let Err(error) = run() {
         eprintln!("{error:#}");
@@ -137,19 +149,28 @@ fn run() -> Result<()> {
         Action::CommitUpdate { token } => (Request::CommitUpdate { token }, false),
         Action::Status => (Request::Status, false),
         Action::Refresh => (Request::RefreshPlatform, false),
-        Action::Submit { path, wait, title } => {
+        Action::Submit {
+            path,
+            format,
+            wait,
+            title,
+        } => {
             let path = fs::canonicalize(path)?;
             let kind = document::DocumentKind::detect(&path, &document::read_input(&path)?)?;
-            if kind == document::DocumentKind::Zpl {
+            if kind == document::DocumentKind::Zpl && format.is_none() {
                 (Request::SubmitZpl { path, title }, wait)
             } else {
                 let snapshot: Snapshot = ipc::request(&paths, Request::Status)?.decode()?;
+                let mut settings = snapshot.settings;
+                if let Some(format) = format {
+                    settings.format = format;
+                }
                 (
                     Request::SubmitDocument {
                         path,
                         title,
                         language: kind,
-                        settings: snapshot.settings,
+                        settings,
                     },
                     wait,
                 )
@@ -443,7 +464,7 @@ fn dispatch(request: Request, service: &Arc<Service>) -> Result<serde_json::Valu
         }
         Request::SaveSettings { settings } => {
             let _configuration = service.configuration.lock().unwrap();
-            settings.validate()?;
+            settings.validate_for(None)?;
             let old = store.settings()?;
             anyhow::ensure!(settings.raw_port == old.raw_port && settings.ipp_port == old.ipp_port,
                 "Listener ports are selected at startup; use queue repair after restarting with new ports");

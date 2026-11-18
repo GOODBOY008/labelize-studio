@@ -491,6 +491,33 @@ impl DesignDocument {
     pub fn vector_pdf(&self, dpmm: i32) -> Result<Vec<u8>> {
         scene::Scene::new(self, dpmm)?.pdf()
     }
+
+    pub(crate) fn zpl_pixels(&self, dpmm: i32) -> Result<GrayImage> {
+        let pixels = self.render_pixels(dpmm, crate::RenderMode::Raster, 1, false)?;
+        ensure!(
+            pixels.width() >= 2,
+            "ZPL print width must be at least two dots"
+        );
+        Ok(pixels)
+    }
+
+    pub fn to_zpl(&self, dpmm: i32) -> Result<String> {
+        let pixels = self.zpl_pixels(dpmm)?;
+        let (width, height) = pixels.dimensions();
+        let image = image::DynamicImage::ImageLuma8(pixels).into_rgba8();
+        let options = labelize::ReverseOptions {
+            dpmm,
+            ..Default::default()
+        };
+        let mut zpl = labelize::image_to_zpl(&image, &options)?;
+        // Matching base/target values reset any previous DPI conversion to one dot per pixel.
+        let base_dpi = if dpmm == 8 { 200 } else { 300 };
+        zpl.insert_str(
+            "^XA".len(),
+            &format!("\n^MUD,{base_dpi},{base_dpi}\n^PW{width}\n^LL{height}\n^LH0,0"),
+        );
+        Ok(zpl)
+    }
 }
 
 pub fn normalize_image(bytes: &[u8]) -> Result<Vec<u8>> {
