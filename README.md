@@ -6,7 +6,7 @@
 
 [![Build and package](https://github.com/GOODBOY008/labelize-studio/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/GOODBOY008/labelize-studio/actions/workflows/build.yml)
 
-[Download](https://github.com/GOODBOY008/labelize-studio/releases) · [Screenshots](#screenshots) · [Get started](#get-started) · [Designer guide](docs/designer.md) · [Build from source](docs/development.md) · [Report an issue](https://github.com/GOODBOY008/labelize-studio/issues/new/choose) · [Discussions](https://github.com/GOODBOY008/labelize-studio/discussions)
+[Download](https://github.com/GOODBOY008/labelize-studio/releases) · [Changelog](CHANGELOG.md) · [Screenshots](#screenshots) · [Get started](#get-started) · [Designer guide](docs/designer.md) · [Build from source](docs/development.md) · [Report an issue](https://github.com/GOODBOY008/labelize-studio/issues/new/choose) · [Discussions](https://github.com/GOODBOY008/labelize-studio/discussions)
 
 Labelize Studio (formerly Labelize Printer) is a desktop label workspace for **Windows, macOS, and Linux**. Create visual designs, open ZPL, EPL, TSPL/TSC, CPCL, and DPL files, preview labels side by side, and save the results as PDF or PNG. A multi-tab workspace keeps each document's edits, preview, and export settings together, with local drafts and session recovery.
 
@@ -14,7 +14,7 @@ The app also provides a **local virtual printer**: select **Labelize Printer** i
 
 Built with **Rust + GPUI**, the desktop app uses the [Labelize engine](https://github.com/GOODBOY008/labelize) for printer-language parsing and rendering. Labelize is the reusable engine, available as a library, CLI, HTTP service, WebAssembly package, and Android library; this project adds the desktop workspace, visual designer, virtual printer, and job management.
 
-> **v0.6.0** lets you design a label once, preview it with real data, and export a reusable printer template for ZPL, TSPL/TSC, EPL2, CPCL or DPL. Studio uses Labelize 1.13.0 and includes English and Simplified Chinese language packs. [Template guide and integration examples](docs/print-templates.md)
+Use the same order number as printed text, a Code 128 barcode, and a QR code. Preview a record in Studio, then fill the exported template from your application. [Template guide and integration examples](docs/print-templates.md)
 
 ## Screenshots
 
@@ -26,24 +26,24 @@ Built with **Rust + GPUI**, the desktop app uses the [Labelize engine](https://g
 
 ![Labelize Studio previewing a two-page ZPL sample with independent export settings](docs/screenshots/workspace.jpg)
 
-Captured on macOS from development commit `7155d05` using synthetic sample data. The refreshed logo and export controls shown here ship in v0.5.0. Try the [designer showcase](examples/designer-showcase.labelize.json) or [two-page ZPL example](examples/shipping-demo.zpl). See the [capture details](docs/screenshots/README.md).
+Try the sample labels shown in the macOS screenshots. [Designer showcase](examples/designer-showcase.labelize.json) · [Two-page ZPL example](examples/shipping-demo.zpl) · [Capture details](docs/screenshots/README.md)
 
 ## What you can do
 
-| Workflow | Capabilities | Availability |
-| --- | --- | --- |
-| Visual design | Add text, Code 128, QR codes, rectangles, and images; move objects and edit their dimensions. | v0.2.0 |
-| Extended designer | 15 object types, including ten barcode formats; text layout, rotation, image fitting, fills, and layer controls. | v0.4.0 |
-| Label files | Open ZPL, EPL, TSPL/TSC, CPCL, or DPL; edit supported text files and preview each page. | v0.2.0 |
-| Multi-tab workspace | Independent edits, automatic previews, recent files, and local session/draft recovery. | v0.3.0 |
-| PDF/PNG export | Save all pages as one raster PDF or one PNG per page. | v0.2.0 |
-| Rendering quality | Optional antialiasing, native vector PDF, and 1–4× PNG rendering from a vector scene. | v0.5.0 |
-| Portable templates | Save editable `.labelize.json` templates with embedded images and imported fonts. | v0.2.0 |
-| ZPL design export | Export the design as a monochrome graphic for an 8 or 12 dots/mm ZPL printer. | v0.6.0 |
-| Fillable printer templates | Bind fields, preview a JSON record, and export a native template for any of the five printer languages. | v0.6.0 |
-| Virtual printer | Select a local system printer and capture jobs as PDF or PNG while the desktop window is closed. | v0.1.2 |
-| Job management | Choose an output folder, inspect results, open saved files, and retry failed jobs. | v0.1.2 |
-| Software updates | Stable-release checks, verified full installers, and package-manager-aware handoff. | v0.4.0 |
+| Workflow | Capabilities |
+| --- | --- |
+| Visual design | Arrange text, shapes, images, and ten barcode types. Adjust dimensions, text layout, rotation, image fit, fills, and layer order. |
+| Label files | Open ZPL, EPL, TSPL/TSC, CPCL, and DPL files. Edit supported text files and preview each page. |
+| Multi-tab workspace | Keep edits and export settings per tab, preview changes automatically, and recover local drafts after a restart. |
+| PDF/PNG export | Save all pages as one PDF or one PNG per page. Vector PDF keeps supported text searchable. |
+| Rendering quality | Smooth raster edges with antialiasing or render a vector scene to PNG at 1×–4× scale. |
+| Portable designs | Save editable `.labelize.json` designs with embedded images and imported fonts. |
+| ZPL design export | Export a fixed layout as a monochrome graphic at 8 or 12 dots/mm. |
+| Fillable printer templates | Bind fields to text and barcodes, preview a JSON record in a design or an exported template, and fill native templates for all five printer languages. |
+| Virtual printer | Select **Labelize Printer** in another application to capture jobs as PDF or PNG, even with the Studio window closed. |
+| Job management | Choose an output folder, inspect results, open saved files, and retry failed jobs. |
+| Software updates | Check for stable releases and verify installer downloads. Homebrew installations upgrade through Homebrew. |
+| Interface languages | Follow the system language on first launch or choose English or Simplified Chinese in the sidebar. |
 
 ## Get started
 
@@ -79,7 +79,7 @@ Upgrading from Labelize Printer? Follow the [migration guide](docs/migration.md)
 
 ### Software updates
 
-**Settings → Software update** is available from v0.4.0 onward. It checks stable GitHub releases at startup at most once every 24 hours. You can turn this off or check manually. Downloading and installing always require your action. To upgrade from v0.3.0 or earlier, install the current version through an installer or Homebrew.
+Open **Settings → Software update** to check for stable releases or turn off automatic checks. Studio checks at startup at most once every 24 hours. You choose when to download and install. If your installation has no update control, upgrade using your usual installer or Homebrew. [Migration guide](docs/migration.md#upgrade)
 
 Direct installations download the matching full installer and verify its size and SHA256 against both `SHA256SUMS` and GitHub's asset digest. Homebrew installations keep using Homebrew. On Linux, a missing DEB handler falls back to the downloaded file and a safely quoted `apt` command.
 
@@ -99,8 +99,6 @@ Defaults are PDF, the `Labelize` folder under Documents, a 102 × 152 mm label, 
 **macOS and Linux setup:** The app registers a local IPP queue using its bundled PAPPL adapter. Linux requires CUPS and a desktop PolicyKit agent; the Wayland file picker also needs a working XDG desktop portal. Queue setup requests elevation only when needed. Everyday processing runs as the current user.
 
 ## Open and design labels
-
-Install v0.4.0 or later for the **Workspace** and designer features described here. Installers are available from [GitHub Releases](https://github.com/GOODBOY008/labelize-studio/releases); you can also [build from source](docs/development.md#build-and-run).
 
 ### Open a label file
 
@@ -124,7 +122,7 @@ Each tab restores these options with its draft. Changing them refreshes the prev
 
 Choose **New design** to start a template. Select an object on the canvas or in the object list, drag it to move, and edit its position and size in millimetres. Property edits update the preview automatically. Duplicate or delete the selected object, and use **Undo** and **Redo** to restore design changes. Each tab keeps its own design history.
 
-Version **0.4.0** expands the designer to 15 object types: text, rectangles, ellipses, lines, images, and ten barcode formats. The inspector offers rotation, text wrapping and alignment, fills and rounded corners, image fitting, barcode parameters, and layer naming, visibility, locking, and order. A bottom-right handle resizes the selected object; arrow keys move it precisely when the canvas has focus. See the [designer guide](docs/designer.md) for the full property list and a sample template.
+The designer supports 15 object types, including text, rectangles, ellipses, lines, images, and ten barcode formats. The inspector offers rotation, text wrapping and alignment, fills and rounded corners, image fitting, barcode parameters, and layer naming, visibility, locking, and order. Drag the bottom-right handle to resize the selected object, or use the arrow keys to move it when the canvas has focus. [Designer guide and sample template](docs/designer.md)
 
 **Save** writes back to the source file, asking for a path only for an untitled document. **Save as** is in the overflow menu. A design is saved as a portable `.labelize.json` template containing its objects, images, and imported font. Reopen the file to continue editing. For Chinese or other text outside the default font's coverage, import a compatible TrueType/OpenType font of up to 32 MiB. Missing glyphs, overflowing text, and undersized barcodes produce errors. Images are composited over white and rendered in monochrome.
 
