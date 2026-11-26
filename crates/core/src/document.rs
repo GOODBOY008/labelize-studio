@@ -12,6 +12,10 @@ use std::{
 mod renderer;
 #[cfg(feature = "render")]
 pub use renderer::{check_input_format, parse, preview, render, vector_pdf, UnsupportedBarTender};
+#[cfg(feature = "render")]
+mod template;
+#[cfg(feature = "render")]
+pub use template::{TemplateRecord, TemplateReport, FILLED_JOB, TEMPLATE_REPORT};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -55,6 +59,9 @@ pub struct PreviewRequest {
     pub input: PathBuf,
     pub kind: DocumentKind,
     pub settings: Settings,
+    #[cfg(feature = "render")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub template: Option<TemplateRecord>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PreviewPage {

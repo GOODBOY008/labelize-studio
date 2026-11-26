@@ -14,3 +14,9 @@ this baseline just to accommodate a change in legacy rendering.
 `bartender-sample.btw` is an unchanged copy of
 [`Sample_Doc1.btw` from Seagull's BarTender Cloud API examples](https://github.com/Seagull-Scientific/bartender-cloud-api/blob/9c0fbe4291dee0c5fdda13de38d69ba71b0a8975/Sample_Doc1.btw).
 Its [MIT license](bartender-sample.LICENSE) is included alongside the fixture.
+
+The ten printer jobs in `print-templates/` are byte-for-byte copies of Labelize
+v1.13.0's [fixed interoperability fixtures](https://github.com/GOODBOY008/labelize/tree/v1.13.0/testdata/templates).
+They pair with the two records in `examples/print-templates/` at 8 dots/mm.
+The DPL jobs use the shipping design with the binary logo. The Studio sources
+for the fixtures are covered by the repository's MIT license.

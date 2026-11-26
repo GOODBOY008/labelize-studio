@@ -1,6 +1,9 @@
 use anyhow::{bail, Context, Result};
 use labelize_printer_core::{
-    document::{DocumentKind, PreviewPage, PreviewRequest},
+    document::{
+        DocumentKind, PreviewPage, PreviewRequest, TemplateRecord, TemplateReport, FILLED_JOB,
+        TEMPLATE_REPORT,
+    },
     ipc,
     paths::{atomic_write, private_dir},
     platform, AppPaths, JobRecord, JobState, Request, Settings, WORKER_TIMEOUT_SECONDS,
@@ -18,8 +21,9 @@ use std::{
 };
 
 pub struct Preview {
-    pub directory: tempfile::TempDir,
+    pub directory: Arc<tempfile::TempDir>,
     pub pages: Vec<PreviewPage>,
+    pub template: Option<TemplateReport>,
 }
 
 pub fn preview(
@@ -27,6 +31,7 @@ pub fn preview(
     bytes: Vec<u8>,
     kind: DocumentKind,
     settings: Settings,
+    template: Option<TemplateRecord>,
     cancelled: Arc<AtomicBool>,
 ) -> Result<Preview> {
     anyhow::ensure!(!cancelled.load(Ordering::Acquire), "Preview cancelled");
@@ -38,12 +43,14 @@ pub fn preview(
     let input = directory.path().join("input");
     atomic_write(&input, &bytes)?;
     let request_path = directory.path().join("request.json");
+    let has_template = template.is_some();
     atomic_write(
         &request_path,
         &serde_json::to_vec(&PreviewRequest {
             input,
             kind,
             settings,
+            template,
         })?,
     )?;
     let log = directory.path().join("renderer.log");
@@ -58,14 +65,31 @@ pub fn preview(
         .arg(directory.path());
     run_renderer(command, &log, Some(&cancelled))?;
     let pages = serde_json::from_slice(&fs::read(directory.path().join("pages.json"))?)?;
-    Ok(Preview { directory, pages })
+    let template = if has_template {
+        Some(serde_json::from_slice(&fs::read(
+            directory.path().join(TEMPLATE_REPORT),
+        )?)?)
+    } else {
+        None
+    };
+    Ok(Preview {
+        directory: Arc::new(directory),
+        pages,
+        template,
+    })
 }
 
-pub fn export_template(paths: &AppPaths, bytes: Vec<u8>, dpmm: i32, output: &Path) -> Result<()> {
+pub fn export_template(
+    paths: &AppPaths,
+    bytes: Vec<u8>,
+    language: labelize_printer_core::design::TemplateLanguage,
+    dpmm: i32,
+) -> Result<Vec<u8>> {
     let directory = tempfile::Builder::new()
         .prefix("template-")
         .tempdir_in(&paths.root)?;
     let input = directory.path().join("design.json");
+    let output = directory.path().join("export.tpl");
     atomic_write(&input, &bytes)?;
     let mut command = Command::new(platform::sibling_binary("labelize-printer-daemon")?);
     command
@@ -73,11 +97,14 @@ pub fn export_template(paths: &AppPaths, bytes: Vec<u8>, dpmm: i32, output: &Pat
         .arg(&paths.root)
         .arg("export-template")
         .arg(input)
+        .arg("--language")
+        .arg(language.extension())
         .arg("--dpmm")
         .arg(dpmm.to_string())
         .arg("--output")
-        .arg(output);
-    run_renderer(command, &directory.path().join("renderer.log"), None)
+        .arg(&output);
+    run_renderer(command, &directory.path().join("renderer.log"), None)?;
+    labelize_printer_core::document::read_input(&output)
 }
 
 fn run_renderer(mut command: Command, log: &Path, cancel: Option<&AtomicBool>) -> Result<()> {
@@ -121,9 +148,14 @@ fn run_renderer(mut command: Command, log: &Path, cancel: Option<&AtomicBool>) -
     Ok(())
 }
 
+pub enum ExportInput {
+    Source(Vec<u8>),
+    Filled(Arc<tempfile::TempDir>),
+}
+
 pub fn submit(
     paths: &AppPaths,
-    bytes: Vec<u8>,
+    source: ExportInput,
     kind: DocumentKind,
     settings: Settings,
     title: String,
@@ -133,7 +165,12 @@ pub fn submit(
         .prefix("document-")
         .tempdir_in(paths.root.join("incoming"))?;
     let input = directory.path().join("input");
-    atomic_write(&input, &bytes)?;
+    match source {
+        ExportInput::Source(bytes) => atomic_write(&input, &bytes)?,
+        ExportInput::Filled(preview) => {
+            fs::copy(preview.path().join(FILLED_JOB), &input)?;
+        }
+    }
     let job: JobRecord = ipc::request(
         paths,
         Request::SubmitDocument {

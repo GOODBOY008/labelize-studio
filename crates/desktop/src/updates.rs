@@ -37,7 +37,7 @@ pub struct Updates {
     pub progress: (u64, u64),
     pub error: Option<String>,
     pub recovery: Option<String>,
-    pub message: Option<String>,
+    pub message: Option<crate::i18n::Message>,
     pub checked: bool,
     pub cancel: Arc<AtomicBool>,
     pub ticket: Option<Ticket>,

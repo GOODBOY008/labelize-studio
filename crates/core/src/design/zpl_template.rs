@@ -1,27 +1,7 @@
 //! Emit one host-filled format. Static ink is composited in design order;
 //! native fields are additive, so a later opaque layer cannot erase one.
-use super::{
-    template::{parts, Part},
-    *,
-};
+use super::{print_template::expression, *};
 use std::fmt::Write;
-
-#[derive(Clone, Copy)]
-struct Rect {
-    x: u32,
-    y: u32,
-    w: u32,
-    h: u32,
-}
-
-impl Rect {
-    fn intersects(self, other: Self) -> bool {
-        self.x < other.x + other.w
-            && other.x < self.x + self.w
-            && self.y < other.y + other.h
-            && other.y < self.y + self.h
-    }
-}
 
 impl DesignDocument {
     pub fn to_zpl_template(&self, dpmm: i32) -> Result<String> {
@@ -29,63 +9,10 @@ impl DesignDocument {
         let width = render::canvas_extent(self.width_mm, dpmm);
         let height = render::canvas_extent(self.height_mm, dpmm);
         ensure!(width >= 2, "ZPL print width must be at least two dots");
-        let mut background = GrayImage::from_pixel(width, height, Luma([255]));
         let mut native = String::new();
-        let mut bound: Vec<(Rect, Background, String)> = Vec::new();
-        for (i, o) in self
-            .objects
-            .iter()
-            .enumerate()
-            .filter(|(_, o)| o.style.visible)
-        {
-            let dots = |mm: f64| (mm * f64::from(dpmm)).round() as u32;
-            let (w, h) = o.bounds_size();
-            let rect = Rect {
-                x: dots(o.x),
-                y: dots(o.y),
-                w: dots(w),
-                h: dots(h),
-            };
-            let label = format!(
-                "Object {} ({})",
-                i + 1,
-                if o.style.name.is_empty() {
-                    format!("{:?}", o.kind)
-                } else {
-                    o.style.name.clone()
-                }
-            );
-            if let Some((_, _, lower)) = bound.iter().find(|(r, background, _)| {
-                r.intersects(rect)
-                    && (o.style.background != Background::Transparent
-                        || (!o.variable && *background == Background::Black))
-            }) {
-                anyhow::bail!("{label}: background or foreground ink covers variable {lower}. Move the layers apart or use transparent backgrounds.");
-            }
-            if !o.variable {
-                render::paint(&mut background, o, self, dpmm).context(label)?;
-                continue;
-            }
-            if o.style.background != Background::Transparent {
-                let paper = if o.style.background == Background::Black {
-                    0
-                } else {
-                    255
-                };
-                for y in rect.y..(rect.y + rect.h).min(height) {
-                    for x in rect.x..(rect.x + rect.w).min(width) {
-                        background.put_pixel(x, y, Luma([paper]));
-                    }
-                }
-            }
+        let background = self.template_layers(dpmm, TemplateLanguage::Zpl, false, |_, o| {
             self.native_field(o, dpmm, &mut native)
-                .with_context(|| label.clone())?;
-            bound.push((rect, o.style.background, label));
-        }
-        ensure!(
-            !bound.is_empty(),
-            "Bind a visible text or barcode to a variable first"
-        );
+        })?;
         let mut zpl = if background.as_raw().iter().any(|&p| p < 128) {
             let mut out = Self::bitmap_zpl(background, dpmm)?;
             let end = out
@@ -103,17 +30,7 @@ impl DesignDocument {
 
     fn native_field(&self, o: &DesignObject, dpmm: i32, out: &mut String) -> Result<()> {
         // The source carries only escaped literals and named slots. It never carries sample data.
-        let mut expression = String::new();
-        for part in parts(&o.text)? {
-            match part {
-                Part::Field(name) => write!(expression, "{{{{{name}}}}}")?,
-                Part::Literal(text) => {
-                    for byte in text.bytes() {
-                        write!(expression, "_{byte:02X}")?;
-                    }
-                }
-            }
-        }
+        let expression = expression(&o.text)?;
         let mut sample = o.clone();
         sample.text = o.sample_text(&self.samples)?;
         let dots = |mm: f64| (mm * f64::from(dpmm)).round() as u32;

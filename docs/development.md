@@ -82,7 +82,7 @@ Since v0.2.0, the daemon accepts ZPL, EPL, TSPL/TSC, CPCL, DPL, and `.labelize.j
 
 In a development build, `submit --format` overrides the output format for one job. Choose `pdf` or `png` for any label document, or `zpl` for a design template. The job uses the configured output directory and resolution.
 
-To export a host-filled template directly from a design, run `target/debug/labelize-printer-daemon export-template examples/java/shipping.labelize.json --dpmm 8 --output shipping.tpl.zpl`. The desktop uses this same renderer in a separate process. With a JDK installed, `cargo test -p labelize-printer-core --locked --test zpl_templates -- --include-ignored` compiles the Java integration example, fills two records at both resolutions, and independently decodes all ten barcode types.
+To export a host-filled template, run `target/debug/labelize-printer-daemon export-template examples/print-templates/shipping.labelize.json --language tspl --dpmm 8 --output shipping.tpl.tspl`. The accepted languages are `zpl` (default), `tspl` (`tsc`), `epl` (`epl2`), `cpcl` and `dpl`. The desktop uses the same exporter in an isolated worker. Studio pins the crates.io release of Labelize 1.13.0. Run `cargo test -p labelize-printer-core --locked --test zpl_templates --test print_templates` for fixed native jobs, pixel comparisons and independent barcode decoding. Set `LABELIZE_CLI` to the 1.13.0 executable to compare all 20 parameter previews against the CLI. [Application integration](print-templates.md)
 
 | Command | Behavior |
 | --- | --- |
@@ -95,6 +95,14 @@ To export a host-filled template directly from a design, run `target/debug/label
 | `stop` | Stop the service when its queue is idle. |
 
 Removing the queue or application does not delete saved output, job history, or retained failed inputs. Retrying a failed job reuses its original ID and settings snapshot.
+
+## Desktop language packs
+
+Studio embeds its interface languages at build time. The sidebar globe lists the native name of every shipped pack. On first launch Studio checks the operating system’s preferred languages in order, matches regional variants, and falls back to English. A saved manual choice takes priority. Switching languages refreshes the current window, open tabs and validation messages while retaining entered values.
+
+To add a language, copy the [English pack](../crates/desktop/locales/en.json) into the same directory and name it after its BCP 47 tag, for example `de.json`. Set a unique Rust enum variant such as `German`, the language’s native name, and any additional locale aliases. Translate the values under `messages` and keep their keys and named placeholders such as `%{count}`. Literal printer expressions like `{{order_no}}` are displayed verbatim. The desktop build checks every pack against English and lists new packs automatically. The macOS packaging step also generates the native language declarations and localized Documents-folder prompt.
+
+Printer fields, filenames and job data retain their original contents. Studio translates recognized renderer diagnostics when displaying them and preserves the original detail for unrecognized system or driver errors. [Chinese pack](../crates/desktop/locales/zh-CN.json)
 
 ## Checks
 

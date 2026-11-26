@@ -62,8 +62,7 @@ impl PrinterApp {
                     }
                     Err(e) => {
                         if self.updates.cancel.load(Ordering::Acquire) {
-                            self.updates.message =
-                                Some(self.t("下载已取消。", "Download cancelled.").into());
+                            self.updates.message = Some(Text::DownloadCancelled.into());
                         } else {
                             self.updates.error = Some(e);
                         }
@@ -104,7 +103,7 @@ impl PrinterApp {
                     Ok(message) => {
                         self.updates.recovery = None;
                         self.updates.error = None;
-                        self.updates.message = Some(message);
+                        self.updates.message = Some(message.into());
                         self.send(Work::Refresh, cx);
                     }
                     Err(e) => self.updates.recovery = Some(e),
@@ -147,15 +146,12 @@ impl PrinterApp {
             self.modal = true;
             let prompt = window.prompt(
                 PromptLevel::Warning,
-                self.t("保存输出设置？", "Save output settings?"),
-                Some(self.t(
-                    "安装前请选择如何处理未保存的设置。标签草稿会自动保留。",
-                    "Choose what to do with unsaved settings. Label drafts will be retained.",
-                )),
+                self.text(Text::SaveOutputSettings),
+                Some(self.text(Text::UnsavedUpdateSettings)),
                 &[
-                    PromptButton::cancel(self.t("取消", "Cancel")),
-                    PromptButton::new(self.t("放弃设置更改", "Discard settings changes")),
-                    PromptButton::new(self.t("保存并继续", "Save and continue")),
+                    PromptButton::cancel(self.text(Text::Cancel)),
+                    PromptButton::new(self.text(Text::DiscardSettings)),
+                    PromptButton::new(self.text(Text::SaveAndContinue)),
                 ],
                 cx,
             );
@@ -211,19 +207,22 @@ impl PrinterApp {
             None
         };
         let detail = if let Some(command) = &command {
-            format!("{}\n\n{command}\n\n{}", self.t("应用将退出并暂停打印。升级命令会复制到剪贴板，请在终端中执行。", "The app will close and pause printing. The upgrade command will be copied; run it in your terminal."),
-                self.t("完成或取消后，重新打开 Labelize Studio。", "Reopen Labelize Studio after completing or cancelling installation."))
+            format!(
+                "{}\n\n{command}\n\n{}",
+                self.text(Text::BrewUpgradeHint),
+                self.text(Text::ReopenAfterUpgrade)
+            )
         } else {
-            self.t("标签草稿将保留，打印暂时停止。请在系统安装器中完成安装，然后重新打开应用。试用安装包尚未签名。", "Drafts will be retained and printing paused. Complete the system installer, then reopen the app. Trial installers are unsigned.").into()
+            self.text(Text::InstallerHandoffHint).into()
         };
         self.modal = true;
         let prompt = window.prompt(
             PromptLevel::Info,
-            self.t("准备安装更新", "Ready to install update"),
+            self.text(Text::ReadyToInstall),
             Some(&detail),
             &[
-                PromptButton::cancel(self.t("取消", "Cancel")),
-                PromptButton::new(self.t("退出并继续", "Quit and continue")),
+                PromptButton::cancel(self.text(Text::Cancel)),
+                PromptButton::new(self.text(Text::QuitAndContinue)),
             ],
             cx,
         );
@@ -281,21 +280,21 @@ impl PrinterApp {
         let idle = self.updates.phase == Phase::Idle;
         let mut page = div().flex().flex_col().gap_4().min_w_0();
         let status = if self.updates.phase == Phase::Checking {
-            self.t("正在检查…", "Checking…")
+            self.text(Text::CheckingUpdate)
         } else if self.updates.phase == Phase::Preparing {
-            self.t("正在准备安全交接…", "Preparing installation…")
+            self.text(Text::PreparingInstall)
         } else if self.updates.phase == Phase::Downloading {
-            self.t("正在下载并校验…", "Downloading and verifying…")
+            self.text(Text::DownloadingVerified)
         } else if self.updates.verified.is_some() {
-            self.t("安装包已校验", "Installer verified")
+            self.text(Text::InstallerVerified)
         } else if self.updates.offer.is_some() {
-            self.t("新版本可用", "Update available")
+            self.text(Text::UpdateAvailable)
         } else if self.updates.error.is_some() {
-            self.t("检查或下载未完成", "Check or download did not finish")
+            self.text(Text::UpdateIncomplete)
         } else if self.updates.checked {
-            self.t("已是最新稳定版", "You have the latest stable version")
+            self.text(Text::UpToDate)
         } else {
-            self.t("检查稳定版更新", "Check for stable updates")
+            self.text(Text::CheckStableUpdates)
         };
         let last = self
             .preferences
@@ -306,49 +305,106 @@ impl PrinterApp {
                     .format("%Y-%m-%d %H:%M")
                     .to_string()
             })
-            .unwrap_or_else(|| self.t("尚未检查", "Not checked yet").into());
-        page = page.child(card(compact)
-            .child(section_title(status))
-            .child(div().text_sm().child(format!("{} {}", self.t("当前版本", "Current version"), env!("CARGO_PKG_VERSION"))))
-            .child(div().text_xs().text_color(rgb(MUTED)).child(format!("{}: {last}", self.t("上次检查", "Last check"))))
-            .child(button_row()
-                .child(Button::new("check-update").label(self.t("检查更新", "Check for updates")).disabled(!idle || self.updates.target.is_none()).on_click(cx.listener(|s, _, _, cx| s.check_update(true, cx))))
-                .child(Button::new("automatic-updates").ghost().selected(self.preferences.automatic_updates)
-                    .label(if self.preferences.automatic_updates { self.t("自动检查：开启", "Automatic checks: on") } else { self.t("自动检查：关闭", "Automatic checks: off") })
-                    .on_click(cx.listener(|s, _, _, cx| {
-                        let mut prefs = s.preferences.clone(); prefs.automatic_updates = !prefs.automatic_updates;
-                        match prefs.save(&s.preferences_path) { Ok(()) => s.preferences = prefs, Err(e) => s.updates.error = Some(format!("{e:#}")) } cx.notify();
-                    }))))
-            .child(div().text_xs().text_color(rgb(MUTED)).child(self.t("启动时每天最多检查一次。下载和安装都由你确认。", "Checks at startup, at most once a day. You choose when to download and install."))));
+            .unwrap_or_else(|| self.text(Text::NotChecked).into());
+        page = page.child(
+            card(compact)
+                .child(section_title(status))
+                .child(div().text_sm().child(self.preferences.language.format(
+                    Text::CurrentVersion,
+                    &[("version", env!("CARGO_PKG_VERSION"))],
+                )))
+                .child(
+                    div().text_xs().text_color(rgb(MUTED)).child(
+                        self.preferences
+                            .language
+                            .format(Text::LastCheck, &[("time", &last)]),
+                    ),
+                )
+                .child(
+                    button_row()
+                        .child(
+                            Button::new("check-update")
+                                .label(self.text(Text::CheckUpdates))
+                                .disabled(!idle || self.updates.target.is_none())
+                                .on_click(cx.listener(|s, _, _, cx| s.check_update(true, cx))),
+                        )
+                        .child(
+                            Button::new("automatic-updates")
+                                .ghost()
+                                .selected(self.preferences.automatic_updates)
+                                .label(if self.preferences.automatic_updates {
+                                    self.text(Text::AutomaticChecksOn)
+                                } else {
+                                    self.text(Text::AutomaticChecksOff)
+                                })
+                                .on_click(cx.listener(|s, _, _, cx| {
+                                    let mut prefs = s.preferences.clone();
+                                    prefs.automatic_updates = !prefs.automatic_updates;
+                                    match prefs.save(&s.preferences_path) {
+                                        Ok(()) => s.preferences = prefs,
+                                        Err(e) => s.updates.error = Some(format!("{e:#}")),
+                                    }
+                                    cx.notify();
+                                })),
+                        ),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(rgb(MUTED))
+                        .child(self.text(Text::AutomaticChecksHelp)),
+                ),
+        );
         if let Some(error) = &self.updates.recovery {
-            page = page.child(card(compact).child(section_title(self.t("确认安装状态", "Verify installation")))
-                .child(banner(error.clone(), true))
-                .child(div().text_sm().child(self.t("完成或关闭安装器后重试。组件版本不一致时，请重新运行完整安装包。", "Finish or close the installer, then retry. If component versions differ, run the full installer again.")))
-                .child(button_row()
-                    .child(Button::new("verify-update").primary().label(self.t("验证新版本", "Verify new version")).disabled(!idle).on_click(cx.listener(|s, _, _, cx| { s.updates.recover(false); cx.notify(); })))
-                    .child(Button::new("resume-old-version").label(self.t("已取消安装，恢复当前版本", "Installation cancelled; resume current version")).disabled(!idle).on_click(cx.listener(|s, _, _, cx| { s.updates.recover(true); cx.notify(); })))));
+            page = page.child(
+                card(compact)
+                    .child(section_title(self.text(Text::VerifyInstallation)))
+                    .child(banner(self.preferences.language.diagnostic(error), true))
+                    .child(div().text_sm().child(self.text(Text::RetryInstallerHint)))
+                    .child(
+                        button_row()
+                            .child(
+                                Button::new("verify-update")
+                                    .primary()
+                                    .label(self.text(Text::VerifyNewVersion))
+                                    .disabled(!idle)
+                                    .on_click(cx.listener(|s, _, _, cx| {
+                                        s.updates.recover(false);
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(
+                                Button::new("resume-old-version")
+                                    .label(self.text(Text::ResumeCurrentVersion))
+                                    .disabled(!idle)
+                                    .on_click(cx.listener(|s, _, _, cx| {
+                                        s.updates.recover(true);
+                                        cx.notify();
+                                    })),
+                            ),
+                    ),
+            );
         }
         if let Some(error) = &self.updates.error {
-            page = page.child(banner(error.clone(), true));
+            page = page.child(banner(self.preferences.language.diagnostic(error), true));
         }
         if let Some(message) = &self.updates.message {
-            page = page.child(banner(message.clone(), false));
+            page = page.child(banner(message.display(self.preferences.language), false));
         }
         if self.updates.source == InstallSource::Unknown && self.updates.target.is_some() {
             page = page.child(
                 card(compact)
-                    .child(section_title(
-                        self.t("确认安装来源", "Choose installation source"),
-                    ))
-                    .child(div().text_sm().child(self.t(
-                        "无法确认 Homebrew 记录，请选择这份应用的安装方式。",
-                        "Homebrew inventory could not be read. Select how this app was installed.",
-                    )))
+                    .child(section_title(self.text(Text::ChooseInstallSource)))
+                    .child(
+                        div()
+                            .text_sm()
+                            .child(self.text(Text::UnavailableBrewInventory)),
+                    )
                     .child(
                         button_row()
                             .child(
                                 Button::new("source-pkg")
-                                    .label(self.t("直接安装包", "Direct installer"))
+                                    .label(self.text(Text::DirectInstaller))
                                     .on_click(cx.listener(|s, _, _, cx| {
                                         s.set_update_source(InstallSource::Package, cx)
                                     })),
@@ -365,19 +421,16 @@ impl PrinterApp {
             let url = offer.release_url.clone();
             let mut release = card(compact)
                 .child(
-                    div()
-                        .text_lg()
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .child(format!(
-                            "{} {}",
-                            self.t("新版本", "New version"),
-                            offer.version
-                        )),
+                    div().text_lg().font_weight(FontWeight::SEMIBOLD).child(
+                        self.preferences
+                            .language
+                            .format(Text::NewVersion, &[("version", &offer.version)]),
+                    ),
                 )
                 .child(
                     Button::new("update-release-notes")
                         .ghost()
-                        .label(self.t("查看发行说明", "View release notes"))
+                        .label(self.text(Text::ReleaseNotes))
                         .on_click(move |_, _, _| {
                             let url = url.clone();
                             std::thread::spawn(move || {
@@ -386,21 +439,32 @@ impl PrinterApp {
                         }),
                 );
             if self.updates.source == InstallSource::Homebrew {
-                release = release.child(div().text_sm().child(self.t("这份应用由 Homebrew 管理。退出后使用下方命令升级。", "This installation is managed by Homebrew. Quit, then use this command to upgrade.")))
+                release = release
+                    .child(div().text_sm().child(self.text(Text::BrewManagedHint)))
                     .child(div().text_xs().child(updater::BREW_COMMAND))
-                    .child(Button::new("copy-brew").label(self.t("复制命令", "Copy command")).on_click(|_, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(updater::BREW_COMMAND.into()))));
+                    .child(
+                        Button::new("copy-brew")
+                            .label(self.text(Text::CopyCommand))
+                            .on_click(|_, _, cx| {
+                                cx.write_to_clipboard(ClipboardItem::new_string(
+                                    updater::BREW_COMMAND.into(),
+                                ))
+                            }),
+                    );
             } else if let Some(file) = &self.updates.verified {
                 let folder = file.path.parent().unwrap().to_path_buf();
                 release = release
-                    .child(div().text_sm().child(format!(
-                        "{}: {}",
-                        self.t("已校验", "Verified"),
-                        file.offer.installer.name
-                    )))
+                    .child(
+                        div().text_sm().child(
+                            self.preferences
+                                .language
+                                .format(Text::Verified, &[("file", &file.offer.installer.name)]),
+                        ),
+                    )
                     .child(
                         Button::new("show-update-download")
                             .ghost()
-                            .label(self.t("显示安装包", "Show installer"))
+                            .label(self.text(Text::ShowInstaller))
                             .on_click(move |_, _, _| {
                                 let folder = folder.clone();
                                 std::thread::spawn(move || {
@@ -410,9 +474,18 @@ impl PrinterApp {
                     );
                 if self.updates.manual_install {
                     let command = updater::platform::apt_command(&file.path);
-                    release = release.child(div().text_sm().child(self.t("未找到 DEB 图形安装器。退出后在终端执行下方命令。", "No DEB installer was found. Quit, then run this command in your terminal.")))
+                    release = release
+                        .child(div().text_sm().child(self.text(Text::MissingDebInstaller)))
                         .child(div().text_xs().child(command.clone()))
-                        .child(Button::new("copy-apt").label(self.t("复制命令", "Copy command")).on_click(move |_, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(command.clone()))));
+                        .child(
+                            Button::new("copy-apt")
+                                .label(self.text(Text::CopyCommand))
+                                .on_click(move |_, _, cx| {
+                                    cx.write_to_clipboard(ClipboardItem::new_string(
+                                        command.clone(),
+                                    ))
+                                }),
+                        );
                 }
             } else if self.updates.phase == Phase::Downloading {
                 let (done, total) = self.updates.progress;
@@ -444,7 +517,7 @@ impl PrinterApp {
                     )
                     .child(
                         Button::new("cancel-update-download")
-                            .label(self.t("取消下载", "Cancel download"))
+                            .label(self.text(Text::CancelDownload))
                             .on_click(cx.listener(|s, _, _, cx| {
                                 s.updates.cancel.store(true, Ordering::Release);
                                 cx.notify();
@@ -454,7 +527,7 @@ impl PrinterApp {
                 release = release.child(
                     Button::new("download-update")
                         .primary()
-                        .label(self.t("下载更新", "Download update"))
+                        .label(self.text(Text::DownloadUpdate))
                         .disabled(!idle || self.updates.source != InstallSource::Package)
                         .on_click(cx.listener(|s, _, _, cx| {
                             s.updates.message = None;
@@ -471,9 +544,9 @@ impl PrinterApp {
                             if self.updates.source == InstallSource::Homebrew
                                 || self.updates.manual_install
                             {
-                                self.t("退出并准备升级", "Quit to upgrade")
+                                self.text(Text::QuitToUpgrade)
                             } else {
-                                self.t("退出并安装", "Quit and install")
+                                self.text(Text::QuitAndInstall)
                             },
                         )
                         .disabled(
@@ -486,7 +559,12 @@ impl PrinterApp {
                         .on_click(cx.listener(|s, _, w, cx| s.confirm_update(w, cx))),
                 );
             }
-            release = release.child(div().text_xs().text_color(rgb(MUTED)).child(self.t("完整安装包经 SHA256 校验。当前试用包未签名；安装完成后重新打开应用即可恢复标签页。", "Full installers are checked with SHA256. Trial packages are unsigned. Reopen the app after installation to restore your tabs.")));
+            release = release.child(
+                div()
+                    .text_xs()
+                    .text_color(rgb(MUTED))
+                    .child(self.text(Text::InstallerVerificationHint)),
+            );
             page = page.child(release);
         }
         page

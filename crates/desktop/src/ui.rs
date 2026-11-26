@@ -1,7 +1,7 @@
 #[path = "ui_updates.rs"]
 mod update_ui;
 use crate::branding;
-use crate::i18n::{Language, Preferences, Text};
+use crate::i18n::{Language, Message, Preferences, Text};
 use crate::worker::{self, Activity, Event, Work};
 use gpui::{prelude::*, *};
 #[cfg(windows)]
@@ -9,6 +9,7 @@ use gpui_component::select::{Select, SelectEvent, SelectState};
 use gpui_component::{
     button::{Button, ButtonVariants},
     input::{Input, InputState},
+    menu::{DropdownMenu, PopupMenuItem},
     scroll::ScrollableElement,
     Disableable, Icon, IconName, Selectable, Sizable, TitleBar,
 };
@@ -64,16 +65,10 @@ impl Page {
     fn title(self, language: Language) -> &'static str {
         match self {
             Self::Studio => language.text(Text::Studio),
-            Self::Recent => match language {
-                Language::Chinese => "最近文件",
-                Language::English => "Recent files",
-            },
+            Self::Recent => language.text(Text::RecentFiles),
             Self::Setup => language.text(Text::Setup),
             Self::Settings => language.text(Text::Settings),
-            Self::Updates => match language {
-                Language::Chinese => "软件更新",
-                Language::English => "Software update",
-            },
+            Self::Updates => language.text(Text::SoftwareUpdate),
             Self::Jobs => language.text(Text::Jobs),
         }
     }
@@ -81,16 +76,10 @@ impl Page {
     fn description(self, language: Language) -> &'static str {
         match self {
             Self::Studio => language.text(Text::StudioDescription),
-            Self::Recent => match language {
-                Language::Chinese => "继续处理最近打开的标签文件。",
-                Language::English => "Continue working on a recently opened label file.",
-            },
+            Self::Recent => language.text(Text::RecentFilesDescription),
             Self::Setup => language.text(Text::SetupDescription),
             Self::Settings => language.text(Text::SettingsDescription),
-            Self::Updates => match language {
-                Language::Chinese => "检查新版本，在准备好时安装。",
-                Language::English => "Check for a new version and install when you are ready.",
-            },
+            Self::Updates => language.text(Text::SoftwareUpdateDescription),
             Self::Jobs => language.text(Text::JobsDescription),
         }
     }
@@ -116,7 +105,7 @@ pub struct PrinterApp {
     driver: Entity<SelectState<Vec<SharedString>>>,
     draft: Settings,
     commands: mpsc::Sender<Work>,
-    notice: Option<Result<String, String>>,
+    notice: Option<Result<Message, Message>>,
     activity: Option<Activity>,
     modal: bool,
     jobs_filter: u8,
@@ -132,7 +121,9 @@ impl PrinterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let jobs_search = cx.new(|cx| InputState::new(window, cx).placeholder("Filter / 筛选"));
+        let jobs_search = cx.new(|cx| {
+            InputState::new(window, cx).placeholder(preferences.language.text(Text::FilterJobs))
+        });
         cx.observe(&jobs_search, |_, _, cx| cx.notify()).detach();
         let preferences_path = paths.root.join("desktop.json");
         let draft = Settings::default();
@@ -240,37 +231,32 @@ impl PrinterApp {
             .update(cx, |studio, cx| studio.open_path(path, window, cx));
     }
 
-    fn t(&self, zh: &'static str, en: &'static str) -> &'static str {
-        match self.preferences.language {
-            Language::Chinese => zh,
-            Language::English => en,
-        }
-    }
-
     fn text(&self, text: Text) -> &'static str {
         self.preferences.language.text(text)
     }
 
-    fn switch_language(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn switch_language(&mut self, language: Language, window: &mut Window, cx: &mut Context<Self>) {
         let preferences = Preferences {
-            language: self.preferences.language.other(),
+            language,
             ..self.preferences.clone()
         };
         match preferences.save(&self.preferences_path) {
             Ok(()) => {
                 self.preferences = preferences;
-                crate::apply_language(self.preferences.language, cx);
+                crate::apply_language(language, cx);
+                self.jobs_search.update(cx, |search, cx| {
+                    search.set_placeholder(language.text(Text::FilterJobs), window, cx)
+                });
                 self.studio.update(cx, |studio, cx| {
-                    studio.set_language(self.preferences.language, cx);
+                    studio.set_language(language, cx);
                     cx.notify();
                 });
-                self.notice = None;
                 window.refresh();
             }
             Err(error) => {
-                self.notice = Some(Err(format!(
-                    "{}\n{error}",
-                    self.text(Text::SaveLanguageError)
+                self.notice = Some(Err(Message::WithDetail(
+                    Text::SaveLanguageError,
+                    error.to_string(),
                 )));
             }
         }
@@ -299,21 +285,25 @@ impl PrinterApp {
                 result,
             } => {
                 self.activity = None;
-                self.notice = Some(result.map(|snapshot| {
-                    self.apply_snapshot(snapshot, updates_settings, window, cx);
-                    if activity == Activity::Test {
-                        self.change_page(Page::Jobs, window, cx);
-                    }
-                    match activity {
-                        Activity::Refresh => self.text(Text::EnvironmentRefreshed),
-                        Activity::Save => self.text(Text::SettingsSaved),
-                        Activity::Install => self.text(Text::PrinterConfigured),
-                        Activity::Test => self.text(Text::TestSubmitted),
-                        Activity::Retry => self.text(Text::JobRetried),
-                        Activity::Remove => self.text(Text::PrinterRemoved),
-                    }
-                    .into()
-                }));
+                self.notice = Some(
+                    result
+                        .map(|snapshot| {
+                            self.apply_snapshot(snapshot, updates_settings, window, cx);
+                            if activity == Activity::Test {
+                                self.change_page(Page::Jobs, window, cx);
+                            }
+                            match activity {
+                                Activity::Refresh => Text::EnvironmentRefreshed,
+                                Activity::Save => Text::SettingsSaved,
+                                Activity::Install => Text::PrinterConfigured,
+                                Activity::Test => Text::TestSubmitted,
+                                Activity::Retry => Text::JobRetried,
+                                Activity::Remove => Text::PrinterRemoved,
+                            }
+                            .into()
+                        })
+                        .map_err(Message::Diagnostic),
+                );
                 self.scroll.set_offset(Point::default());
                 if activity == Activity::Save && self.update_after_save {
                     self.update_after_save = false;
@@ -433,7 +423,7 @@ impl PrinterApp {
                 self.notice = None;
                 self.activity = Some(activity);
             }
-            Err(_) => self.notice = Some(Err(self.text(Text::WorkerStopped).into())),
+            Err(_) => self.notice = Some(Err(Text::WorkerStopped.into())),
         }
         cx.notify();
     }
@@ -489,7 +479,7 @@ impl PrinterApp {
             .snapshot
             .as_ref()
             .expect("Connected app has a snapshot");
-        let result = (|| -> anyhow::Result<Settings> {
+        let result = (|| -> Result<Settings, Message> {
             let mut settings = self.draft.clone();
             settings.output_dir = PathBuf::from(self.output_dir.read(cx).value().as_str());
             settings.width_mm = self
@@ -498,24 +488,25 @@ impl PrinterApp {
                 .value()
                 .trim()
                 .parse()
-                .map_err(|_| anyhow::anyhow!(self.text(Text::InvalidWidth)))?;
+                .map_err(|_| Message::Label(Text::InvalidWidth))?;
             settings.height_mm = self
                 .height
                 .read(cx)
                 .value()
                 .trim()
                 .parse()
-                .map_err(|_| anyhow::anyhow!(self.text(Text::InvalidHeight)))?;
+                .map_err(|_| Message::Label(Text::InvalidHeight))?;
             settings.raw_port = snapshot.settings.raw_port;
             settings.ipp_port = snapshot.settings.ipp_port;
             settings.setup_complete = snapshot.settings.setup_complete;
-            anyhow::ensure!(
-                settings.output_dir.is_absolute(),
-                self.text(Text::InvalidDirectory)
-            );
+            if !settings.output_dir.is_absolute() {
+                return Err(Text::InvalidDirectory.into());
+            }
             labelize_printer_core::validate_media(settings.width_mm, settings.height_mm)
-                .map_err(|_| anyhow::anyhow!(self.text(Text::InvalidMedia)))?;
-            settings.validate()?;
+                .map_err(|_| Message::Label(Text::InvalidMedia))?;
+            settings
+                .validate()
+                .map_err(|e| Message::Diagnostic(e.to_string()))?;
             Ok(settings)
         })();
         match result {
@@ -529,7 +520,7 @@ impl PrinterApp {
                 cx,
             ),
             Err(error) => {
-                self.notice = Some(Err(error.to_string()));
+                self.notice = Some(Err(error));
                 self.scroll.set_offset(Point::default());
                 cx.notify();
             }
@@ -567,9 +558,9 @@ impl PrinterApp {
                             }
                         }
                         Ok(Err(error)) => {
-                            app.notice = Some(Err(format!(
-                                "{}\n{error}",
-                                app.text(Text::FolderPickerError)
+                            app.notice = Some(Err(Message::WithDetail(
+                                Text::FolderPickerError,
+                                error.to_string(),
                             )));
                             app.scroll.set_offset(Point::default());
                         }
@@ -613,10 +604,10 @@ impl PrinterApp {
 
     fn open_path(&mut self, path: &Path, cx: &mut Context<Self>) {
         let result = if !path.is_absolute() || !path.exists() {
-            Err(self.text(Text::MissingPath).into())
+            Err(Message::Label(Text::MissingPath))
         } else {
             open::that_detached(path)
-                .map_err(|error| format!("{}\n{error}", self.text(Text::OpenPathError)))
+                .map_err(|error| Message::WithDetail(Text::OpenPathError, error.to_string()))
         };
         if let Err(error) = result {
             self.notice = Some(Err(error));
@@ -626,6 +617,8 @@ impl PrinterApp {
     }
 
     fn sidebar(&self, compact: bool, cx: &mut Context<Self>) -> impl IntoElement {
+        let current_language = self.preferences.language;
+        let app = cx.weak_entity();
         let mut nav = div()
             .w(px(if compact { 56. } else { 188. }))
             .flex_shrink_0()
@@ -660,7 +653,7 @@ impl PrinterApp {
                                     div()
                                         .text_size(px(10.))
                                         .text_color(rgb(MUTED))
-                                        .child("LABEL WORKSPACE"),
+                                        .child(self.text(Text::WorkspaceTagline)),
                                 ),
                         )
                     }),
@@ -705,35 +698,30 @@ impl PrinterApp {
                                 .text_xs()
                                 .text_color(rgb(MUTED))
                                 .child(if ready {
-                                    self.t("打印机已就绪", "Printer ready")
+                                    self.text(Text::PrinterReady)
                                 } else {
-                                    self.t("打印机未就绪", "Printer not ready")
+                                    self.text(Text::PrinterNotReady)
                                 }),
                         )
                     }),
             )
-            .child(
-                Button::new("switch-language")
-                    .ghost()
-                    .w_full()
-                    .justify_start()
-                    .icon(IconName::Globe)
-                    .tooltip(self.preferences.language.other().name())
-                    .when(!compact, |b| {
-                        b.label(self.preferences.language.other().name())
-                    })
-                    .disabled(self.modal)
-                    .on_click(cx.listener(|s, _, w, cx| s.switch_language(w, cx))),
-            )
+            .child(language_picker(
+                current_language,
+                compact,
+                self.modal,
+                move |language, window, cx| {
+                    let _ = app.update(cx, |s, cx| s.switch_language(language, window, cx));
+                },
+            ))
             .child(
                 Button::new("nav-settings")
                     .ghost()
                     .w_full()
                     .justify_start()
                     .icon(IconName::Settings2)
-                    .tooltip(self.t("设置", "Settings"))
+                    .tooltip(self.text(Text::Settings))
                     .selected(matches!(self.page, Page::Setup | Page::Settings))
-                    .when(!compact, |b| b.label(self.t("设置", "Settings")))
+                    .when(!compact, |b| b.label(self.text(Text::Settings)))
                     .on_click(cx.listener(|app, _, w, cx| app.change_page(Page::Settings, w, cx))),
             );
         nav
@@ -750,10 +738,12 @@ impl PrinterApp {
             .border_1()
             .border_color(rgb(BORDER));
         if files.is_empty() {
-            list = list.child(div().p_6().text_color(rgb(MUTED)).child(self.t(
-                "打开文件后会在这里显示。",
-                "Files you open will appear here.",
-            )));
+            list = list.child(
+                div()
+                    .p_6()
+                    .text_color(rgb(MUTED))
+                    .child(self.text(Text::RecentEmptyHint)),
+            );
         }
         for (i, path) in files.into_iter().enumerate() {
             let name = path
@@ -1038,9 +1028,9 @@ impl PrinterApp {
                                     if let Err(error) = open::that_detached(
                                         labelize_printer_core::platform::DRIVER_URL,
                                     ) {
-                                        app.notice = Some(Err(format!(
-                                            "{}\n{error}",
-                                            app.text(Text::DriverDownloadError)
+                                        app.notice = Some(Err(Message::WithDetail(
+                                            Text::DriverDownloadError,
+                                            error.to_string(),
                                         )));
                                         cx.notify();
                                     }
@@ -1133,10 +1123,10 @@ impl PrinterApp {
                 .child(div().w(px(220.)).child(Input::new(&self.jobs_search)))
                 .children(
                     [
-                        (0, self.t("全部", "All")),
-                        (1, self.t("进行中", "In progress")),
-                        (2, self.t("已保存", "Saved")),
-                        (3, self.t("失败", "Failed")),
+                        (0, self.text(Text::All)),
+                        (1, self.text(Text::InProgress)),
+                        (2, self.text(Text::Saved)),
+                        (3, self.text(Text::Failed)),
                     ]
                     .into_iter()
                     .map(|(filter, label)| {
@@ -1155,7 +1145,7 @@ impl PrinterApp {
                     div()
                         .text_xs()
                         .text_color(rgb(MUTED))
-                        .child(self.t("筛选最近 100 条任务", "Filters the latest 100 jobs")),
+                        .child(self.text(Text::RecentJobsFilterHint)),
                 ),
         );
         if jobs.is_empty() {
@@ -1247,10 +1237,11 @@ impl PrinterApp {
                 .child(div().text_sm().text_color(rgb(MUTED)).child(detail));
             if self.expanded_job.as_deref() == Some(&job.id) {
                 row = row.child(
-                    div()
-                        .text_xs()
-                        .text_color(rgb(MUTED))
-                        .child(format!("ID: {}", job.id)),
+                    div().text_xs().text_color(rgb(MUTED)).child(
+                        self.preferences
+                            .language
+                            .format(Text::JobId, &[("id", &job.id)]),
+                    ),
                 );
                 for file in &job.output_files {
                     row = row.child(
@@ -1262,14 +1253,19 @@ impl PrinterApp {
                 }
             }
             if let Some(error) = &job.error {
-                row = row.child(div().text_sm().text_color(rgb(color)).child(error.clone()));
+                row = row.child(
+                    div()
+                        .text_sm()
+                        .text_color(rgb(color))
+                        .child(self.preferences.language.diagnostic(error)),
+                );
             }
             let details_id = job.id.clone();
             let mut controls = button_row().child(
                 Button::new("job-details")
                     .small()
                     .ghost()
-                    .label(self.t("详情", "Details"))
+                    .label(self.text(Text::Details))
                     .on_click(cx.listener(move |s, _, _, cx| {
                         s.expanded_job = if s.expanded_job.as_ref() == Some(&details_id) {
                             None
@@ -1316,7 +1312,7 @@ impl PrinterApp {
                 div()
                     .p_6()
                     .text_color(rgb(MUTED))
-                    .child(self.t("没有匹配的任务", "No matching jobs")),
+                    .child(self.text(Text::NoMatchingJobs)),
             );
         }
         list
@@ -1436,6 +1432,33 @@ fn field(label: &'static str, content: impl IntoElement) -> Div {
         .child(content)
 }
 
+fn language_picker(
+    current: Language,
+    compact: bool,
+    disabled: bool,
+    choose: impl Fn(Language, &mut Window, &mut App) + Clone + 'static,
+) -> impl IntoElement {
+    Button::new("switch-language")
+        .ghost()
+        .w_full()
+        .justify_start()
+        .icon(IconName::Globe)
+        .tooltip(current.text(Text::InterfaceLanguage))
+        .when(!compact, |button| button.label(current.name()))
+        .disabled(disabled)
+        .dropdown_menu(move |mut menu, _, _| {
+            for &language in Language::ALL {
+                let choose = choose.clone();
+                menu = menu.item(
+                    PopupMenuItem::new(language.name())
+                        .checked(language == current)
+                        .on_click(move |_, window, cx| choose(language, window, cx)),
+                );
+            }
+            menu
+        })
+}
+
 fn badge(text: &'static str, color: u32) -> Div {
     div()
         .flex_shrink_0()
@@ -1479,18 +1502,15 @@ impl Render for PrinterApp {
                     .bg(rgb(0xeef3ff))
                     .text_xs()
                     .child(div().flex_1().child(if self.updates.recovery.is_some() {
-                        self.t(
-                            "检查安装状态后恢复打印。",
-                            "Verify the installation to resume printing.",
-                        )
+                        self.text(Text::VerifyInstallationHint)
                     } else {
-                        self.t("有新版本可用。", "A new version is available.")
+                        self.text(Text::UpdateAvailableHint)
                     }))
                     .child(
                         Button::new("view-update")
                             .small()
                             .ghost()
-                            .label(self.t("查看更新", "View update"))
+                            .label(self.text(Text::ViewUpdate))
                             .on_click(
                                 cx.listener(|s, _, w, cx| s.change_page(Page::Updates, w, cx)),
                             ),
@@ -1509,15 +1529,17 @@ impl Render for PrinterApp {
                         .py_2()
                         .bg(rgb(0xeef3ff))
                         .text_xs()
-                        .child(div().flex_1().min_w(px(130.)).child(self.t(
-                            "也可以从系统打印窗口接收标签任务。",
-                            "Receive label jobs from your system print dialog.",
-                        )))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w(px(130.))
+                                .child(self.text(Text::SystemPrintHint)),
+                        )
                         .child(
                             Button::new("setup-printer-hint")
                                 .small()
                                 .ghost()
-                                .label(self.t("配置打印机", "Set up printer"))
+                                .label(self.text(Text::ConfigurePrinter))
                                 .on_click(
                                     cx.listener(|s, _, w, cx| s.change_page(Page::Setup, w, cx)),
                                 ),
@@ -1526,7 +1548,7 @@ impl Render for PrinterApp {
                             Button::new("skip-setup-hint")
                                 .small()
                                 .ghost()
-                                .label(self.t("稍后", "Later"))
+                                .label(self.text(Text::Later))
                                 .on_click(cx.listener(|s, _, _, cx| {
                                     s.studio.update(cx, |s, cx| s.dismiss_setup(cx));
                                 })),
@@ -1582,7 +1604,7 @@ impl Render for PrinterApp {
                             Button::new("settings-output-tab")
                                 .ghost()
                                 .selected(self.page == Page::Settings)
-                                .label(self.t("输出默认值", "Output defaults"))
+                                .label(self.text(Text::OutputDefaults))
                                 .on_click(
                                     cx.listener(|s, _, w, cx| s.change_page(Page::Settings, w, cx)),
                                 ),
@@ -1591,7 +1613,7 @@ impl Render for PrinterApp {
                             Button::new("settings-printer-tab")
                                 .ghost()
                                 .selected(self.page == Page::Setup)
-                                .label(self.t("系统打印机", "System printer"))
+                                .label(self.text(Text::SystemPrinter))
                                 .on_click(
                                     cx.listener(|s, _, w, cx| s.change_page(Page::Setup, w, cx)),
                                 ),
@@ -1600,7 +1622,7 @@ impl Render for PrinterApp {
                             Button::new("settings-update-tab")
                                 .ghost()
                                 .selected(self.page == Page::Updates)
-                                .label(self.t("软件更新", "Software update"))
+                                .label(self.text(Text::SoftwareUpdate))
                                 .on_click(
                                     cx.listener(|s, _, w, cx| s.change_page(Page::Updates, w, cx)),
                                 ),
@@ -1609,8 +1631,8 @@ impl Render for PrinterApp {
             }
             if let Some(notice) = &self.notice {
                 body = body.child(match notice {
-                    Ok(s) => banner(s.clone(), false),
-                    Err(s) => banner(s.clone(), true),
+                    Ok(s) => banner(s.display(self.preferences.language), false),
+                    Err(s) => banner(s.display(self.preferences.language), true),
                 });
             }
             if self.connection_error.is_some() {
@@ -1626,7 +1648,7 @@ impl Render for PrinterApp {
                         .iter()
                         .filter(|n| !n.starts_with("Install the official ZDesigner"))
                     {
-                        body = body.child(banner(note.clone(), true));
+                        body = body.child(banner(self.preferences.language.diagnostic(note), true));
                     }
                 }
             }
@@ -1743,5 +1765,50 @@ impl Render for PrinterApp {
                     .child(self.sidebar(compact, cx))
                     .child(content),
             )
+    }
+}
+
+#[cfg(test)]
+mod language_picker_tests {
+    use super::{language_picker, Language};
+    use gpui::{
+        div, point, px, AppContext as _, Context, IntoElement, Modifiers, ParentElement, Render,
+        Styled, TestAppContext, Window,
+    };
+    use gpui_component::Root;
+    use std::{cell::Cell, rc::Rc};
+
+    struct Picker(Rc<Cell<Language>>);
+
+    impl Render for Picker {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let selected = self.0.clone();
+            div().w(px(170.)).child(language_picker(
+                selected.get(),
+                false,
+                false,
+                move |lang, _, _| selected.set(lang),
+            ))
+        }
+    }
+
+    #[gpui::test]
+    fn globe_menu_selects_each_shipped_language(cx: &mut TestAppContext) {
+        cx.update(gpui_component::init);
+        let selected = Rc::new(Cell::new(Language::English));
+        let (_, cx) = cx.add_window_view(|w, cx| {
+            let picker = cx.new(|_| Picker(selected.clone()));
+            Root::new(picker, w, cx)
+        });
+        for (index, &lang) in Language::ALL.iter().enumerate().rev() {
+            cx.simulate_click(point(px(40.), px(16.)), Modifiers::default());
+            cx.run_until_parked();
+            for _ in 0..=index {
+                cx.simulate_keystrokes("down");
+            }
+            cx.simulate_keystrokes("enter");
+            cx.run_until_parked();
+            assert_eq!(selected.get(), lang);
+        }
     }
 }

@@ -342,6 +342,7 @@ fn scalable_png_preserves_physical_size_and_preview_export_identity() {
             fs::write(&input, &bytes).unwrap();
             let preview = document::preview(
                 &document::PreviewRequest {
+                    template: None,
                     input: input.clone(),
                     kind,
                     settings: settings.clone(),

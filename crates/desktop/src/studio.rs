@@ -1,5 +1,5 @@
 use crate::{
-    i18n::{Language, Text},
+    i18n::{Language, Message, Text},
     studio_worker::{self, Preview},
     ui::{ScrollPageDown, ScrollPageUp, ACCENT, BORDER, MUTED},
 };
@@ -18,7 +18,8 @@ use labelize_printer::{
 use labelize_printer_core::{
     design::{
         Alignment, Background, DesignDocument, DesignObject, HorizontalAlign, ImageFit, LayerOrder,
-        LineDirection, MatrixShape, ObjectKind, QrEcc, TextFont, VerticalAlign,
+        LineDirection, MatrixShape, ObjectKind, QrEcc, TemplateEncoding, TemplateLanguage,
+        TextFont, VerticalAlign,
     },
     document::{self, DocumentKind},
     paths::atomic_write,
@@ -36,8 +37,11 @@ use std::{
 
 #[path = "studio_properties.rs"]
 mod properties;
+#[path = "studio_record.rs"]
+mod record;
 #[path = "studio_template.rs"]
 mod template;
+use record::RecordEditor;
 
 #[derive(Clone, Copy)]
 struct ObjectDrag {
@@ -62,6 +66,9 @@ pub struct Studio {
     options: Settings,
     source: Vec<u8>,
     kind: DocumentKind,
+    template_language: TemplateLanguage,
+    parameter_mode: bool,
+    record_editor: Option<RecordEditor>,
     design: Option<DesignDocument>,
     unsupported_bartender: bool,
     selected: Option<usize>,
@@ -71,14 +78,15 @@ pub struct Studio {
     editable: bool,
     stale: bool,
     revision: u64,
+    source_revision: u64,
     loading: bool,
     saving: bool,
     submitting: bool,
     rendering: PreviewState,
     close_after_save: bool,
     close_prompt: bool,
-    notice: Option<Result<String, String>>,
-    preview_error: Option<String>,
+    notice: Option<Result<Message, Message>>,
+    preview_error: Option<Message>,
     preview: Option<Preview>,
     page: usize,
     display: Option<Arc<PreviewImages>>,
@@ -109,7 +117,7 @@ impl Studio {
     pub fn new(
         paths: AppPaths,
         language: Language,
-        draft: Draft,
+        mut draft: Draft,
         queue: Arc<PreviewQueue<Preview>>,
         images: Arc<Mutex<PreviewCache>>,
         window: &mut Window,
@@ -141,15 +149,33 @@ impl Studio {
         for input in fields.iter().chain(std::iter::once(&editor)) {
             cx.subscribe(input, |this, _, event: &InputEvent, cx| {
                 if matches!(event, InputEvent::Change) && this.form_changed(cx) {
-                    this.changed(cx);
+                    if this.parameter_mode && this.design.is_none() {
+                        this.render_options_changed(cx);
+                    } else {
+                        this.changed(cx);
+                    }
                 }
             })
             .detach();
         }
         let raw_fields = draft.fields.clone();
         let unsupported_bartender = document::check_input_format(&draft.source).is_err();
-        let editable =
-            !unsupported_bartender && draft.design.is_none() && editable_source(&draft.source);
+        let file_language = draft
+            .file
+            .as_deref()
+            .and_then(TemplateLanguage::from_template_path)
+            .filter(|_| draft.design.is_none() && !unsupported_bartender);
+        let parameter_mode = file_language.is_some();
+        if let Some(language) = file_language {
+            draft.kind = language.document_kind();
+            if draft.options.format == OutputFormat::Zpl {
+                draft.options.format = OutputFormat::Png;
+            }
+        }
+        let editable = !parameter_mode
+            && !unsupported_bartender
+            && draft.design.is_none()
+            && editable_source(&draft.source);
         let mut this = Self {
             id: draft.id,
             language,
@@ -162,6 +188,9 @@ impl Studio {
             options: draft.options,
             source: draft.source,
             kind: draft.kind,
+            template_language: file_language.unwrap_or(draft.template_language),
+            parameter_mode,
+            record_editor: parameter_mode.then(|| RecordEditor::new(BTreeMap::new(), window, cx)),
             design: draft.design,
             unsupported_bartender,
             selected: draft.selected,
@@ -171,6 +200,7 @@ impl Studio {
             editable,
             stale: !unsupported_bartender,
             revision: draft.revision,
+            source_revision: 0,
             loading: false,
             saving: false,
             submitting: false,
@@ -194,8 +224,8 @@ impl Studio {
             due: (!unsupported_bartender).then(Instant::now),
             active: false,
             zoom: draft.zoom,
-            source_mode: draft.source_mode,
-            inspector_open: false,
+            source_mode: !parameter_mode && draft.source_mode,
+            inspector_open: parameter_mode && window.viewport_size().width < px(700.),
             layers_open: false,
             canvas_scroll: ScrollHandle::default(),
             inspector_scroll: ScrollHandle::default(),
@@ -213,18 +243,15 @@ impl Studio {
         }
         this
     }
-    pub fn t(&self, zh: &'static str, en: &'static str) -> &'static str {
-        match self.language {
-            Language::Chinese => zh,
-            Language::English => en,
-        }
+    pub fn t(&self, key: Text) -> &'static str {
+        self.language.text(key)
     }
     pub fn title(&self) -> String {
         self.file
             .as_ref()
             .and_then(|p| p.file_name())
             .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_else(|| self.t("未命名设计", "Untitled design").into())
+            .unwrap_or_else(|| self.t(Text::UntitledDesign).into())
     }
     pub fn focus_editor(&self, window: &mut Window, cx: &mut Context<Self>) {
         if self.source_mode && self.editable {
@@ -241,7 +268,11 @@ impl Studio {
         self.submitting
     }
     pub fn can_export(&self) -> bool {
-        !self.submitting && !self.loading && !self.unsupported_bartender
+        !self.submitting
+            && !self.loading
+            && !self.unsupported_bartender
+            && (!self.parameter_mode
+                || !self.stale && self.preview.as_ref().is_some_and(|p| !p.pages.is_empty()))
     }
     pub fn snapshot(&self, cx: &App) -> Draft {
         let mut d = Draft::new(self.options.clone());
@@ -249,6 +280,7 @@ impl Studio {
         d.file = self.file.clone();
         d.fingerprint = self.fingerprint.clone();
         d.kind = self.kind;
+        d.template_language = self.template_language;
         d.design = self.design.clone();
         if let Some(design) = &mut d.design {
             self.read_samples(design, cx);
@@ -312,15 +344,28 @@ impl Studio {
         }
     }
     fn changed(&mut self, cx: &mut Context<Self>) {
+        self.source_revision += 1;
         self.dirty = true;
         self.render_options_changed(cx);
     }
     // Output preferences live in the session, not in the source file. Changing
     // them invalidates the preview without creating a false unsaved-file prompt.
     fn render_options_changed(&mut self, cx: &mut Context<Self>) {
+        self.persist_version += 1;
+        self.invalidate_preview(cx);
+    }
+    fn invalidate_preview(&mut self, cx: &mut Context<Self>) {
+        if self.parameter_mode || self.preview.as_ref().is_some_and(|p| p.template.is_some()) {
+            self.forget_preview();
+            self.preview = None;
+            self.release_images(cx);
+            self.image_cancel.store(true, Ordering::Release);
+            self.image_request += 1;
+            self.image_loading = false;
+            self.preview_error = None;
+        }
         self.stale = true;
         self.revision += 1;
-        self.persist_version += 1;
         self.outputs.clear();
         self.queue.cancel(&self.id);
         self.rendering.cancel();
@@ -357,7 +402,7 @@ impl Studio {
             o.map_or(128, |o| o.style.image_threshold).to_string(),
             self.design
                 .as_ref()
-                .map(|d| d.printer_font.clone())
+                .map(|d| d.printer_profile(self.template_language).font)
                 .unwrap_or_default(),
         ]
     }
@@ -471,7 +516,11 @@ impl Studio {
                     .parse()
                     .context("Image threshold must be 0–255")?;
             }
-            next.printer_font = self.fields[17].read(cx).value().to_string();
+            let mut profile = next.printer_profile(self.template_language);
+            if profile.font != self.fields[17].read(cx).value().as_str() {
+                profile.font = self.fields[17].read(cx).value().to_string();
+                next.set_printer_profile(self.template_language, profile)?;
+            }
             self.read_samples(&mut next, cx);
             if &next != design {
                 next.sync_variables()?;
@@ -501,20 +550,34 @@ impl Studio {
             "Input must be 1 byte to 64 MiB"
         );
         document::check_input_format(&bytes)
-            .map_err(|_| anyhow::anyhow!(self.language.text(Text::BarTenderExport)))?;
+            .map_err(|_| anyhow::anyhow!(document::UnsupportedBarTender::GUIDANCE))?;
         Ok(bytes)
     }
     fn fail(&mut self, error: impl std::fmt::Display, cx: &mut Context<Self>) {
-        self.notice = Some(Err(format!("{error:#}")));
+        self.notice = Some(Err(format!("{error:#}").into()));
         cx.notify();
     }
 
     pub fn render_preview(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.due = None;
+        let template = if self.parameter_mode {
+            let editor = self.record_editor.as_ref().expect("active record editor");
+            if let Some(error) = &editor.json_error {
+                self.preview_error = Some(error.clone());
+                cx.notify();
+                return;
+            }
+            Some(document::TemplateRecord {
+                language: self.template_language,
+                values: editor.values.clone(),
+            })
+        } else {
+            None
+        };
         let bytes = match self.payload(cx) {
             Ok(b) => b,
             Err(e) => {
-                self.preview_error = Some(format!("{e:#}"));
+                self.preview_error = Some(format!("{e:#}").into());
                 cx.notify();
                 return;
             }
@@ -527,27 +590,33 @@ impl Studio {
         let request = self.rendering.begin(revision);
         self.preview_error = None;
         let result = self.queue.submit(self.id.clone(), move |cancel| {
-            studio_worker::preview(&paths, bytes, kind, settings, cancel)
+            studio_worker::preview(&paths, bytes, kind, settings, template, cancel)
                 .map_err(|e| format!("{e:#}"))
         });
         cx.spawn_in(window, async move |this, cx| {
             let result = result.recv().await;
-            let _ = this.update_in(cx, |this, _, cx| {
+            let _ = this.update_in(cx, |this, window, cx| {
                 if this.revision != revision || !this.rendering.finish(request, this.revision) {
                     return;
                 }
                 match result {
                     Ok(Ok(preview)) => {
+                        if let (Some(report), Some(editor)) =
+                            (&preview.template, &mut this.record_editor)
+                        {
+                            editor.sync_fields(&report.fields, window, cx);
+                        }
+                        let invalid = preview.pages.is_empty();
                         this.page = this.page.min(preview.pages.len().saturating_sub(1));
                         this.forget_preview();
                         this.preview = Some(preview);
                         this.stale = false;
-                        this.preview_error = None;
-                        if this.active {
+                        this.preview_error = invalid.then_some(Text::CheckFields.into());
+                        if this.active && !invalid {
                             this.show_page(cx);
                         }
                     }
-                    Ok(Err(e)) if e != "Preview cancelled" => this.preview_error = Some(e),
+                    Ok(Err(e)) if e != "Preview cancelled" => this.preview_error = Some(e.into()),
                     _ => {}
                 }
                 cx.notify();
@@ -593,6 +662,9 @@ impl Studio {
         let Some(preview) = &self.preview else {
             return;
         };
+        if preview.pages.is_empty() {
+            return;
+        }
         let key = PreviewKey {
             directory: preview.directory.path().into(),
             page: self.page,
@@ -631,7 +703,7 @@ impl Studio {
                     }
                     Err(e) => {
                         s.stale = true;
-                        s.preview_error = Some(e.to_string());
+                        s.preview_error = Some(e.to_string().into());
                     }
                 }
                 cx.notify();
@@ -644,34 +716,37 @@ impl Studio {
         if !self.can_export() {
             return;
         }
-        let bytes = match self.payload(cx) {
-            Ok(b) => b,
-            Err(e) => {
-                self.fail(e, cx);
-                return;
+        let (input, kind) = if self.parameter_mode {
+            let Some(preview) = &self.preview else { return };
+            (
+                studio_worker::ExportInput::Filled(preview.directory.clone()),
+                self.template_language.document_kind(),
+            )
+        } else {
+            match self.payload(cx) {
+                Ok(bytes) => (studio_worker::ExportInput::Source(bytes), self.kind),
+                Err(e) => {
+                    self.fail(e, cx);
+                    return;
+                }
             }
         };
         let paths = self.paths.clone();
         let settings = self.options.clone();
-        let kind = self.kind;
         let title = self.title();
+        let preview_revision = self.parameter_mode.then_some(self.revision);
         self.submitting = true;
         self.notice = None;
         let work = cx
             .background_executor()
-            .spawn(async move { studio_worker::submit(&paths, bytes, kind, settings, title) });
+            .spawn(async move { studio_worker::submit(&paths, input, kind, settings, title) });
         cx.spawn_in(window, async move |this, cx| {
             let result = work.await;
             let accepted = this.update_in(cx, |this, _, cx| {
                 this.submitting = false;
                 match result {
                     Ok(job) => {
-                        this.notice = Some(Ok(this
-                            .t(
-                                "已加入后台任务，可以继续编辑。",
-                                "Queued in the background. You can keep editing.",
-                            )
-                            .into()));
+                        this.notice = Some(Ok(Text::QueuedInBackground.into()));
                         cx.notify();
                         Some((this.paths.clone(), job.id))
                     }
@@ -687,10 +762,13 @@ impl Studio {
                     .spawn(async move { studio_worker::wait_for_output(&paths, id) })
                     .await;
                 let _ = this.update_in(cx, |this, _, cx| {
+                    if preview_revision.is_some_and(|revision| revision != this.revision) {
+                        return;
+                    }
                     match result {
                         Ok(files) => {
                             this.outputs = files;
-                            this.notice = Some(Ok(this.t("文件已保存。", "Files saved.").into()));
+                            this.notice = Some(Ok(Text::FilesSaved.into()));
                         }
                         Err(e) => this.fail(e, cx),
                     }
@@ -730,7 +808,7 @@ impl Studio {
                 return;
             }
         };
-        let revision = self.revision;
+        let revision = self.source_revision;
         let known = self.file.clone();
         let expected = self.fingerprint.clone();
         let picker = if choose || known.is_none() {
@@ -754,31 +832,98 @@ impl Studio {
         };
         self.saving = true;
         cx.notify();
-        cx.spawn_in(window,async move |this,cx| {
-            let selected=if let Some(picker)=picker {match picker.await {Ok(Ok(path))=>Ok(path),Ok(Err(e))=>Err(e.to_string()),Err(e)=>Err(e.to_string())}} else {Ok(known.clone())};
-            let path=match selected {
-                Ok(Some(p))=>p,
-                other=>{let _=this.update_in(cx,|this,_,cx| {this.saving=false;this.close_after_save=false;if let Err(e)=other {this.fail(e,cx);}cx.notify();});return;}
-            };
-            let check_path=path.clone();let is_original=known.as_ref().is_some_and(|p|session::canonical_path(p)==session::canonical_path(&path));
-            let fingerprint=expected.clone();
-            let conflict=cx.background_executor().spawn(async move {is_original && !session::source_matches(&check_path,fingerprint.as_deref())}).await;
-            if conflict {
-                let prompt=this.update_in(cx,|this,w,cx|w.prompt(PromptLevel::Warning,this.t("源文件已在外部更改或移动", "The source file changed or moved"),Some(this.t("本机草稿已保留。覆盖会替换磁盘上的文件；另存为可保留两份。", "Your local draft is retained. Overwrite replaces the disk file; Save as keeps both.")),&[PromptButton::cancel(this.t("取消", "Cancel")),PromptButton::new(this.t("另存为…", "Save as…")),PromptButton::new(this.t("覆盖", "Overwrite"))],cx));
-                let answer=match prompt {Ok(p)=>p.await.ok(),Err(_)=>None};
-                if answer!=Some(2) { let _=this.update_in(cx,|this,w,cx|{this.saving=false;if answer==Some(1) {this.save_as(true,w,cx);} else {this.close_after_save=false;}cx.notify();});return; }
-            }
-            let target=path.clone();let saved_hash=session::digest(&bytes);
-            let result=cx.background_executor().spawn(async move {atomic_write(&target,&bytes)}).await;
-            let _=this.update_in(cx,|this,_,cx| {
-                this.saving=false;
-                match result {
-                    Ok(())=>{this.file=Some(session::canonical_path(&path));this.fingerprint=Some(saved_hash);if this.revision==revision {this.dirty=false;this.close_ready=this.close_after_save;}this.persist_version+=1;this.notice=Some(Ok(this.t("标签文件已保存。", "Label file saved.").into()));},
-                    Err(e)=>this.fail(e,cx),
+        cx.spawn_in(window, async move |this, cx| {
+            let selected = if let Some(picker) = picker {
+                match picker.await {
+                    Ok(Ok(path)) => Ok(path),
+                    Ok(Err(e)) => Err(e.to_string()),
+                    Err(e) => Err(e.to_string()),
                 }
-                this.close_after_save=false;cx.notify();
+            } else {
+                Ok(known.clone())
+            };
+            let path = match selected {
+                Ok(Some(p)) => p,
+                other => {
+                    let _ = this.update_in(cx, |this, _, cx| {
+                        this.saving = false;
+                        this.close_after_save = false;
+                        if let Err(e) = other {
+                            this.fail(e, cx);
+                        }
+                        cx.notify();
+                    });
+                    return;
+                }
+            };
+            let check_path = path.clone();
+            let is_original = known
+                .as_ref()
+                .is_some_and(|p| session::canonical_path(p) == session::canonical_path(&path));
+            let fingerprint = expected.clone();
+            let conflict = cx
+                .background_executor()
+                .spawn(async move {
+                    is_original && !session::source_matches(&check_path, fingerprint.as_deref())
+                })
+                .await;
+            if conflict {
+                let prompt = this.update_in(cx, |this, w, cx| {
+                    w.prompt(
+                        PromptLevel::Warning,
+                        this.t(Text::SourceChanged),
+                        Some(this.t(Text::SourceChangedHelp)),
+                        &[
+                            PromptButton::cancel(this.t(Text::Cancel)),
+                            PromptButton::new(this.t(Text::SaveAs)),
+                            PromptButton::new(this.t(Text::Overwrite)),
+                        ],
+                        cx,
+                    )
+                });
+                let answer = match prompt {
+                    Ok(p) => p.await.ok(),
+                    Err(_) => None,
+                };
+                if answer != Some(2) {
+                    let _ = this.update_in(cx, |this, w, cx| {
+                        this.saving = false;
+                        if answer == Some(1) {
+                            this.save_as(true, w, cx);
+                        } else {
+                            this.close_after_save = false;
+                        }
+                        cx.notify();
+                    });
+                    return;
+                }
+            }
+            let target = path.clone();
+            let saved_hash = session::digest(&bytes);
+            let result = cx
+                .background_executor()
+                .spawn(async move { atomic_write(&target, &bytes) })
+                .await;
+            let _ = this.update_in(cx, |this, _, cx| {
+                this.saving = false;
+                match result {
+                    Ok(()) => {
+                        this.file = Some(session::canonical_path(&path));
+                        this.fingerprint = Some(saved_hash);
+                        if this.source_revision == revision {
+                            this.dirty = false;
+                            this.close_ready = this.close_after_save;
+                        }
+                        this.persist_version += 1;
+                        this.notice = Some(Ok(Text::LabelSaved.into()));
+                    }
+                    Err(e) => this.fail(e, cx),
+                }
+                this.close_after_save = false;
+                cx.notify();
             });
-        }).detach();
+        })
+        .detach();
     }
     pub fn request_tab_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.close_prompt || self.saving || self.loading || self.submitting {
@@ -792,12 +937,12 @@ impl Studio {
         self.close_prompt = true;
         let prompt = window.prompt(
             PromptLevel::Warning,
-            self.t("保存对此标签的修改？", "Save changes to this label?"),
+            self.t(Text::ConfirmSaveLabel),
             Some(&self.title()),
             &[
-                PromptButton::new(self.t("保存", "Save")),
-                PromptButton::new(self.t("放弃", "Discard")),
-                PromptButton::cancel(self.t("取消", "Cancel")),
+                PromptButton::new(self.t(Text::Save)),
+                PromptButton::new(self.t(Text::Discard)),
+                PromptButton::cancel(self.t(Text::Cancel)),
             ],
             cx,
         );
@@ -823,7 +968,7 @@ impl Studio {
             files: false,
             directories: true,
             multiple: false,
-            prompt: Some(self.t("输出目录", "Output folder").into()),
+            prompt: Some(self.t(Text::DocumentOutputFolder).into()),
         });
         cx.spawn_in(window, async move |this, cx| {
             let selected = choice.await;
@@ -850,7 +995,7 @@ impl Studio {
             files: true,
             directories: false,
             multiple: false,
-            prompt: Some(self.t("选择文件", "Choose file").into()),
+            prompt: Some(self.t(Text::ChooseFile).into()),
         });
         cx.spawn_in(window, async move |this, cx| {
             let path = match choice.await {
@@ -923,7 +1068,7 @@ impl Studio {
             files: true,
             directories: false,
             multiple: false,
-            prompt: Some(self.t("重新定位源文件", "Locate source file").into()),
+            prompt: Some(self.t(Text::LocateSource).into()),
         });
         cx.spawn_in(window, async move |this, cx| {
             let answer = choice.await;
@@ -932,12 +1077,7 @@ impl Studio {
                     if let Some(path) = paths.first() {
                         s.file = Some(session::canonical_path(path));
                         s.persist_version += 1;
-                        s.notice = Some(Ok(s
-                            .t(
-                                "路径已更新，草稿内容保持不变。",
-                                "Path updated; draft content retained.",
-                            )
-                            .into()));
+                        s.notice = Some(Ok(Text::PathUpdated.into()));
                     }
                 }
                 cx.notify();
@@ -1021,6 +1161,9 @@ impl Studio {
         self.focus.focus(window);
     }
     pub fn history(&mut self, redo: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if self.parameter_mode {
+            return;
+        }
         if let Err(e) = self.apply_fields(cx) {
             // Undo must also recover from an unfinished numeric entry.
             if !redo {
@@ -1059,21 +1202,21 @@ impl Studio {
     }
     fn object_name(&self, kind: ObjectKind) -> &'static str {
         match kind {
-            ObjectKind::Text => self.t("文字", "Text"),
+            ObjectKind::Text => self.t(Text::ObjectText),
             ObjectKind::Code128 => "Code 128",
             ObjectKind::Code39 => "Code 39",
             ObjectKind::Ean13 => "EAN-13",
             ObjectKind::Ean8 => "EAN-8",
             ObjectKind::Upca => "UPC-A",
             ObjectKind::Itf => "ITF",
-            ObjectKind::Qr => self.t("二维码", "QR code"),
+            ObjectKind::Qr => self.t(Text::ObjectQr),
             ObjectKind::DataMatrix => "Data Matrix",
             ObjectKind::Pdf417 => "PDF417",
             ObjectKind::Aztec => "Aztec",
-            ObjectKind::Rectangle => self.t("矩形", "Rectangle"),
-            ObjectKind::Ellipse => self.t("圆形 / 椭圆", "Ellipse"),
-            ObjectKind::Line => self.t("线条", "Line"),
-            ObjectKind::Image => self.t("图片", "Image"),
+            ObjectKind::Rectangle => self.t(Text::ObjectRectangle),
+            ObjectKind::Ellipse => self.t(Text::ObjectEllipse),
+            ObjectKind::Line => self.t(Text::ObjectLine),
+            ObjectKind::Image => self.t(Text::ObjectImage),
         }
     }
     fn field(&self, index: usize, label: &'static str) -> Div {
@@ -1277,7 +1420,7 @@ impl Studio {
     fn operation_notice(&self, short: bool, cx: &mut Context<Self>) -> Option<Div> {
         let notice = self.notice.as_ref()?;
         let text = match notice {
-            Ok(s) | Err(s) => s,
+            Ok(s) | Err(s) => s.display(self.language),
         };
         Some(
             div()
@@ -1295,14 +1438,14 @@ impl Studio {
                         .max_h(px(if short { 44. } else { 100. }))
                         .id("document-notice-scroll")
                         .overflow_y_scroll()
-                        .child(text.clone()),
+                        .child(text),
                 )
                 .when(!self.outputs.is_empty(), |d| {
                     d.child(
                         Button::new("open-output")
                             .small()
                             .ghost()
-                            .label(self.t("打开", "Open"))
+                            .label(self.t(Text::Open))
                             .on_click(cx.listener(|s, _, _, cx| {
                                 if let Some(path) = s.outputs.first() {
                                     if let Err(e) = open::that_detached(path) {
@@ -1331,11 +1474,11 @@ impl Studio {
             .flex_col()
             .gap_4()
             .p_4()
-            .child(section(self.t("页面设置", "PAGE SETTINGS")))
+            .child(section(self.t(Text::PageSettings)))
             .child(
                 field_row()
-                    .child(self.field(0, self.t("宽度 · mm", "Width · mm")))
-                    .child(self.field(1, self.t("高度 · mm", "Height · mm"))),
+                    .child(self.field(0, self.t(Text::WidthMm)))
+                    .child(self.field(1, self.t(Text::HeightMm))),
             )
             .child(row().children([8, 12].into_iter().map(|dpmm| {
                 Button::new(("document-dpmm", dpmm as usize))
@@ -1344,15 +1487,19 @@ impl Studio {
                     .selected(self.options.dpmm == dpmm)
                     .on_click(cx.listener(move |s, _, _, cx| {
                         s.options.dpmm = dpmm;
-                        s.changed(cx);
+                        s.render_options_changed(cx);
                     }))
             })));
-        if self.design.is_none() {
+        if self.parameter_mode {
+            content = content.child(self.record_panel());
+        } else if self.design.is_none() {
             content = content
-                .child(div().text_xs().text_color(rgb(MUTED)).child(self.t(
-                    "文件声明的尺寸优先于此处缺省尺寸。",
-                    "File dimensions take precedence over these defaults.",
-                )))
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(rgb(MUTED))
+                        .child(self.t(Text::FileMediaHelp)),
+                )
                 .child(
                     row().children(DocumentKind::LANGUAGES.into_iter().enumerate().map(
                         |(i, kind)| {
@@ -1369,7 +1516,7 @@ impl Studio {
                     )),
                 );
         }
-        if self.selected_object().is_some() {
+        if !self.parameter_mode && self.selected_object().is_some() {
             content = content
                 .child(div().h(px(1.)).bg(rgb(BORDER)))
                 .child(self.object_properties(cx));
@@ -1379,20 +1526,17 @@ impl Studio {
             .as_ref()
             .is_some_and(|d| d.objects.iter().any(|o| o.variable))
         {
-            content = content.child(self.field(17, self.t("打印机字体路径（可选）", "Printer font path (optional)")))
-                .child(div().text_xs().text_color(rgb(MUTED)).child(self.t(
-                    "可变中文使用设备字库，如 E:MYFONT.TTF。导入同款字体可在画布校样。",
-                    "For variable CJK text, enter the device font, e.g. E:MYFONT.TTF. Import the same font for the canvas.")));
+            content = content.child(self.template_options(cx));
         }
         content = content
             .child(div().h(px(1.)).bg(rgb(BORDER)))
-            .child(section(self.t("导出文件", "EXPORT")))
+            .child(section(self.t(Text::ExportSection)))
             .when(self.design.is_some(), |panel| {
                 panel.child(
-                    Button::new("export-zpl-template")
+                    Button::new("export-print-template")
                         .small()
-                        .label(self.t("导出 ZPL 模板…", "Export ZPL template…"))
-                        .disabled(!self.can_export())
+                        .label(self.t(Text::ExportTemplate))
+                        .disabled(self.loading || self.submitting)
                         .on_click(cx.listener(|s, _, w, cx| s.export_template(w, cx))),
                 )
             })
@@ -1404,7 +1548,10 @@ impl Studio {
                         (OutputFormat::Zpl, "ZPL"),
                     ]
                     .into_iter()
-                    .filter(|(format, _)| *format != OutputFormat::Zpl || self.design.is_some())
+                    .filter(|(format, _)| {
+                        *format != OutputFormat::Zpl
+                            || self.design.is_some() && !self.parameter_mode
+                    })
                     .enumerate()
                     .map(|(i, (format, label))| {
                         Button::new(("export-format", i))
@@ -1439,21 +1586,16 @@ impl Studio {
                     .text_xs()
                     .text_color(rgb(MUTED))
                     .child(match self.options.format {
-                        OutputFormat::Pdf => {
-                            self.t("全部页面合并为一个 PDF", "All pages in one PDF")
-                        }
-                        OutputFormat::Png => self.t("每页保存为一张 PNG", "One PNG file per page"),
-                        OutputFormat::Zpl => self.t(
-                            "按所选打印分辨率导出黑白位图。",
-                            "Monochrome bitmap at the selected printer resolution.",
-                        ),
+                        OutputFormat::Pdf => self.t(Text::PdfPagesHelp),
+                        OutputFormat::Png => self.t(Text::PngPagesHelp),
+                        OutputFormat::Zpl => self.t(Text::BitmapZplHelp),
                     }),
             )
             .child(
                 div()
                     .text_xs()
                     .text_color(rgb(MUTED))
-                    .child(self.t("保存到", "SAVE TO")),
+                    .child(self.t(Text::SaveTo)),
             )
             .child(
                 div()
@@ -1465,25 +1607,27 @@ impl Studio {
                 Button::new("document-folder")
                     .small()
                     .icon(IconName::FolderOpen)
-                    .label(self.t("更改目录…", "Choose folder…"))
+                    .label(self.t(Text::ChangeFolder))
                     .on_click(cx.listener(|s, _, w, cx| s.folder(w, cx))),
             )
             .child(
                 div()
                     .text_xs()
                     .text_color(rgb(MUTED))
-                    .child(self.t("仅用于当前标签页", "Applies to this tab only")),
+                    .child(self.t(Text::TabOutputHelp)),
             );
         if self.file.as_ref().is_some_and(|p| !p.exists()) {
             content = content
-                .child(div().text_xs().text_color(rgb(0xa22a34)).child(self.t(
-                    "源文件路径已失效，草稿已保留。",
-                    "Source file is missing. Your draft is retained.",
-                )))
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(rgb(0xa22a34))
+                        .child(self.t(Text::MissingSource)),
+                )
                 .child(
                     Button::new("relink-source")
                         .small()
-                        .label(self.t("重新定位…", "Locate file…"))
+                        .label(self.t(Text::LocateFile))
                         .on_click(cx.listener(|s, _, w, cx| s.relink(w, cx))),
                 );
         }
@@ -1582,7 +1726,7 @@ impl Studio {
             .flex_col()
             .gap_3()
             .p_3()
-            .child(section(self.t("添加对象", "ADD OBJECT")));
+            .child(section(self.t(Text::AddObject)));
         let mut tools = div().grid().grid_cols(2).gap_2();
         for (i, kind) in [
             ObjectKind::Text,
@@ -1604,12 +1748,12 @@ impl Studio {
             Button::new("add-image")
                 .small()
                 .icon(IconName::Plus)
-                .label(self.t("图片…", "Image…"))
+                .label(self.t(Text::AddImage))
                 .disabled(self.loading)
                 .on_click(cx.listener(|s, _, w, cx| s.pick_file(1, w, cx))),
         );
         content = content
-            .child(section(self.t("条码 / 二维码", "BARCODES")))
+            .child(section(self.t(Text::Barcodes)))
             .child(
                 div().grid().grid_cols(2).gap_2().children(
                     ObjectKind::BARCODES
@@ -1623,7 +1767,7 @@ impl Studio {
                         }),
                 ),
             )
-            .child(section(self.t("对象列表", "LAYERS")));
+            .child(section(self.t(Text::Layers)));
         if let Some(d) = &self.design {
             for (i, o) in d.objects.iter().enumerate().rev() {
                 content = content.child(
@@ -1658,7 +1802,7 @@ impl Studio {
                                 } else {
                                     IconName::EyeOff
                                 })
-                                .tooltip(self.t("显示 / 隐藏", "Show / hide"))
+                                .tooltip(self.t(Text::ToggleVisibility))
                                 .on_click(
                                     cx.listener(move |s, _, w, cx| s.layer_flag(i, false, w, cx)),
                                 ),
@@ -1668,12 +1812,12 @@ impl Studio {
                                 .small()
                                 .ghost()
                                 .label(if o.style.locked {
-                                    self.t("解锁", "Unlock")
+                                    self.t(Text::Unlock)
                                 } else {
-                                    self.t("锁定", "Lock")
+                                    self.t(Text::Lock)
                                 })
                                 .selected(o.style.locked)
-                                .tooltip(self.t("锁定 / 解锁", "Lock / unlock"))
+                                .tooltip(self.t(Text::ToggleLock))
                                 .on_click(
                                     cx.listener(move |s, _, w, cx| s.layer_flag(i, true, w, cx)),
                                 ),
@@ -1686,14 +1830,16 @@ impl Studio {
                 Button::new("import-font")
                     .small()
                     .ghost()
-                    .label(self.t("导入字体…", "Import font…"))
+                    .label(self.t(Text::ImportFont))
                     .disabled(self.loading)
                     .on_click(cx.listener(|s, _, w, cx| s.pick_file(2, w, cx))),
             )
-            .child(div().text_xs().text_color(rgb(MUTED)).child(self.t(
-                "中文请导入含对应字形的字体。",
-                "Import a font for CJK glyphs.",
-            )));
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(rgb(MUTED))
+                    .child(self.t(Text::ImportCjkFont)),
+            );
         div()
             .id("document-layers-scroll")
             .track_scroll(&self.layers_scroll)
@@ -1726,7 +1872,7 @@ impl Studio {
                 .bg(rgb(0xffffff))
                 .shadow_md()
                 .child(img(image.clone()).size_full());
-            if let Some(d) = &self.design {
+            if let Some(d) = self.design.as_ref().filter(|_| !self.parameter_mode) {
                 for (i, o) in d
                     .objects
                     .iter()
@@ -1853,9 +1999,9 @@ impl Studio {
                     .child(gpui_component::Icon::new(IconName::File).size(px(32.)))
                     .child(div().text_sm().child(
                         if self.rendering.is_running() || self.image_loading {
-                            self.t("正在生成预览…", "Rendering preview…")
+                            self.t(Text::RenderingPreview)
                         } else {
-                            self.t("预览将在这里显示", "Your preview appears here")
+                            self.t(Text::EmptyPreview)
                         },
                     )),
             );
@@ -1893,7 +2039,7 @@ impl Render for Studio {
         let canvas_width = width
             - sidebar
             - if narrow { 0. } else { inspector_width }
-            - if wide && self.design.is_some() {
+            - if wide && self.design.is_some() && !self.parameter_mode {
                 layers_width
             } else {
                 0.
@@ -1912,6 +2058,21 @@ impl Render for Studio {
             .border_color(rgb(BORDER));
         let mut modes = div().flex().items_center().gap_1();
         if self.design.is_some() {
+            modes = modes.child(
+                Button::new("parameter-preview")
+                    .small()
+                    .label(self.t(Text::ParameterPreview))
+                    .selected(self.parameter_mode)
+                    .disabled(
+                        !self.parameter_mode
+                            && !self.design.as_ref().is_some_and(|d| {
+                                d.objects.iter().any(|o| o.variable && o.style.visible)
+                            }),
+                    )
+                    .on_click(cx.listener(|s, _, w, cx| s.toggle_parameters(w, cx))),
+            );
+        }
+        if self.design.is_some() && !self.parameter_mode {
             if !wide {
                 modes = modes.child(
                     Button::new("toggle-layers")
@@ -1933,7 +2094,7 @@ impl Render for Studio {
                         .small()
                         .ghost()
                         .icon(IconName::Undo2)
-                        .tooltip(self.t("撤销", "Undo"))
+                        .tooltip(self.t(Text::Undo))
                         .disabled(self.undo.is_empty())
                         .on_click(cx.listener(|s, _, w, cx| s.history(false, w, cx))),
                 )
@@ -1942,17 +2103,17 @@ impl Render for Studio {
                         .small()
                         .ghost()
                         .icon(IconName::Redo2)
-                        .tooltip(self.t("重做", "Redo"))
+                        .tooltip(self.t(Text::Redo))
                         .disabled(self.redo.is_empty())
                         .on_click(cx.listener(|s, _, w, cx| s.history(true, w, cx))),
                 );
-        } else {
+        } else if self.design.is_none() && !self.parameter_mode {
             modes = modes
                 .child(
                     Button::new("preview-mode")
                         .small()
                         .ghost()
-                        .label(self.t("预览", "Preview"))
+                        .label(self.t(Text::Preview))
                         .selected(!self.source_mode)
                         .on_click(cx.listener(|s, _, w, cx| {
                             s.focus.focus(w);
@@ -1965,7 +2126,7 @@ impl Render for Studio {
                     Button::new("source-mode")
                         .small()
                         .ghost()
-                        .label(self.t("源代码", "Source"))
+                        .label(self.t(Text::Source))
                         .selected(self.source_mode)
                         .on_click(cx.listener(|s, _, w, cx| {
                             s.source_mode = true;
@@ -1975,65 +2136,66 @@ impl Render for Studio {
                         })),
                 );
         }
-        let zoom = div()
-            .flex()
-            .items_center()
-            .gap_1()
-            .child(
-                Button::new("zoom-out")
-                    .small()
-                    .ghost()
-                    .icon(IconName::Minus)
-                    .tooltip(self.t("缩小", "Zoom out"))
-                    .on_click(cx.listener(|s, _, _, cx| {
-                        s.zoom = Some((s.zoom.unwrap_or(1.) - 0.1).max(0.1));
-                        s.persist_version += 1;
-                        cx.notify();
-                    })),
-            )
-            .child(
-                Button::new("zoom-fit")
-                    .small()
-                    .ghost()
-                    .label(self.zoom.map_or_else(
-                        || self.t("适合", "Fit").into(),
-                        |z| format!("{:.0}%", z * 100.),
-                    ))
-                    .on_click(cx.listener(|s, _, _, cx| {
-                        s.zoom = None;
-                        s.canvas_scroll.set_offset(Point::default());
-                        s.persist_version += 1;
-                        cx.notify();
-                    })),
-            )
-            .child(
-                Button::new("zoom-in")
-                    .small()
-                    .ghost()
-                    .icon(IconName::Plus)
-                    .tooltip(self.t("放大", "Zoom in"))
-                    .on_click(cx.listener(|s, _, _, cx| {
-                        s.zoom = Some((s.zoom.unwrap_or(1.) + 0.1).min(4.));
-                        s.persist_version += 1;
-                        cx.notify();
-                    })),
-            )
-            .when(narrow, |d| {
-                d.child(
-                    Button::new("toggle-inspector")
+        let zoom =
+            div()
+                .flex()
+                .items_center()
+                .gap_1()
+                .child(
+                    Button::new("zoom-out")
                         .small()
                         .ghost()
-                        .icon(IconName::Settings2)
-                        .selected(self.inspector_open)
-                        .tooltip(self.t("属性与导出", "Properties & export"))
-                        .on_click(cx.listener(|s, _, w, cx| {
-                            s.focus.focus(w);
-                            s.inspector_open = !s.inspector_open;
-                            s.layers_open = false;
+                        .icon(IconName::Minus)
+                        .tooltip(self.t(Text::ZoomOut))
+                        .on_click(cx.listener(|s, _, _, cx| {
+                            s.zoom = Some((s.zoom.unwrap_or(1.) - 0.1).max(0.1));
+                            s.persist_version += 1;
                             cx.notify();
                         })),
                 )
-            });
+                .child(
+                    Button::new("zoom-fit")
+                        .small()
+                        .ghost()
+                        .label(self.zoom.map_or_else(
+                            || self.t(Text::Fit).into(),
+                            |z| format!("{:.0}%", z * 100.),
+                        ))
+                        .on_click(cx.listener(|s, _, _, cx| {
+                            s.zoom = None;
+                            s.canvas_scroll.set_offset(Point::default());
+                            s.persist_version += 1;
+                            cx.notify();
+                        })),
+                )
+                .child(
+                    Button::new("zoom-in")
+                        .small()
+                        .ghost()
+                        .icon(IconName::Plus)
+                        .tooltip(self.t(Text::ZoomIn))
+                        .on_click(cx.listener(|s, _, _, cx| {
+                            s.zoom = Some((s.zoom.unwrap_or(1.) + 0.1).min(4.));
+                            s.persist_version += 1;
+                            cx.notify();
+                        })),
+                )
+                .when(narrow, |d| {
+                    d.child(
+                        Button::new("toggle-inspector")
+                            .small()
+                            .ghost()
+                            .icon(IconName::Settings2)
+                            .selected(self.inspector_open)
+                            .tooltip(self.t(Text::PropertiesAndExport))
+                            .on_click(cx.listener(|s, _, w, cx| {
+                                s.focus.focus(w);
+                                s.inspector_open = !s.inspector_open;
+                                s.layers_open = false;
+                                cx.notify();
+                            })),
+                    )
+                });
         toolbar = toolbar.child(modes).child(zoom);
         let canvas = if self.source_mode && self.design.is_none() {
             if self.editable {
@@ -2044,7 +2206,13 @@ impl Render for Studio {
                     .child(Input::new(&self.editor).size_full())
                     .into_any_element()
             } else {
-                div().size_full().p_6().text_sm().text_color(rgb(MUTED)).child(self.t("二进制、控制字节或超过 1 MiB 的文件只读。预览和导出保留原始字节。", "Binary/control data and files over 1 MiB are read-only. Preview and export preserve the original bytes.")).into_any_element()
+                div()
+                    .size_full()
+                    .p_6()
+                    .text_sm()
+                    .text_color(rgb(MUTED))
+                    .child(self.t(Text::ReadOnlySourceHelp))
+                    .into_any_element()
             }
         } else {
             self.preview_canvas(
@@ -2093,37 +2261,43 @@ impl Render for Studio {
                     .absolute()
                     .inset_0(),
                 )
-                .when(self.stale || self.image_loading, |area| {
-                    area.child(
-                        div()
-                            .id("preview-status")
-                            .absolute()
-                            .top_2()
-                            .left_2()
-                            .right_2()
-                            .max_h(px(80.))
-                            .overflow_y_scroll()
-                            .rounded_md()
-                            .px_3()
-                            .py_1()
-                            .text_xs()
-                            .text_color(rgb(if self.preview_error.is_some() {
-                                0xa22a34
-                            } else {
-                                MUTED
-                            }))
-                            .bg(rgb(if self.preview_error.is_some() {
-                                0xfff0f0
-                            } else {
-                                0xeef3ff
-                            }))
-                            .child(if let Some(e) = &self.preview_error {
-                                format!("{} · {e}", self.t("预览未更新", "Preview not updated"))
-                            } else {
-                                self.t("正在更新预览…", "Updating preview…").into()
-                            }),
-                    )
-                }),
+                .when(
+                    self.stale || self.image_loading || self.preview_error.is_some(),
+                    |area| {
+                        area.child(
+                            div()
+                                .id("preview-status")
+                                .absolute()
+                                .top_2()
+                                .left_2()
+                                .right_2()
+                                .max_h(px(80.))
+                                .overflow_y_scroll()
+                                .rounded_md()
+                                .px_3()
+                                .py_1()
+                                .text_xs()
+                                .text_color(rgb(if self.preview_error.is_some() {
+                                    0xa22a34
+                                } else {
+                                    MUTED
+                                }))
+                                .bg(rgb(if self.preview_error.is_some() {
+                                    0xfff0f0
+                                } else {
+                                    0xeef3ff
+                                }))
+                                .child(if let Some(e) = &self.preview_error {
+                                    self.language.format(
+                                        Text::PreviewNotUpdated,
+                                        &[("reason", &e.display(self.language))],
+                                    )
+                                } else {
+                                    self.t(Text::UpdatingPreview).into()
+                                }),
+                        )
+                    },
+                ),
         );
         if page_count > 0 && !self.source_mode {
             let mut pages = div()
@@ -2226,7 +2400,7 @@ impl Render for Studio {
             .min_w_0()
             .min_h_0()
             .overflow_hidden();
-        if wide && self.design.is_some() {
+        if wide && self.design.is_some() && !self.parameter_mode {
             content = content.child(
                 div()
                     .w(px(layers_width))
@@ -2292,9 +2466,9 @@ impl Render for Studio {
                                 .border_b_1()
                                 .border_color(rgb(BORDER))
                                 .child(section(if inspector {
-                                    self.t("属性与导出", "PROPERTIES & EXPORT")
+                                    self.t(Text::PropertiesAndExportHeading)
                                 } else {
-                                    self.t("对象列表", "LAYERS")
+                                    self.t(Text::Layers)
                                 }))
                                 .child(
                                     Button::new("close-inspector")
@@ -2330,6 +2504,7 @@ impl Render for Studio {
                 }
                 if s.focus.is_focused(w)
                     && s.design.is_some()
+                    && !s.parameter_mode
                     && s.selected.is_some()
                     && !e.keystroke.modifiers.control
                     && !e.keystroke.modifiers.platform
@@ -2374,7 +2549,15 @@ impl Render for Studio {
                 .text_color(rgb(MUTED))
                 .child(format!(
                     "{} · {}",
-                    self.kind.name(),
+                    if self.parameter_mode {
+                        format!(
+                            "{} · {} dpmm",
+                            self.template_language.name(),
+                            self.options.dpmm
+                        )
+                    } else {
+                        self.kind.name().to_owned()
+                    },
                     self.preview
                         .as_ref()
                         .and_then(|p| p.pages.get(self.page))

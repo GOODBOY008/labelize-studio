@@ -10,13 +10,15 @@ use labelize::elements::{
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, io::Cursor};
 
+mod print_template;
 mod render;
 mod scene;
 mod symbols;
 mod template;
 mod zpl_template;
+pub use print_template::{PrinterProfile, TemplateEncoding, TemplateLanguage};
 
-pub const TEMPLATE_VERSION: u32 = 3;
+pub const TEMPLATE_VERSION: u32 = 4;
 
 #[derive(Clone, Copy)]
 pub enum Alignment {
@@ -303,6 +305,8 @@ pub struct DesignDocument {
     pub samples: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub printer_font: String,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub printer_profiles: BTreeMap<TemplateLanguage, PrinterProfile>,
     /// Optional user-supplied font embedded for portable CJK/non-Latin text.
     #[serde(default, skip_serializing_if = "Vec::is_empty", with = "base64_bytes")]
     pub font: Vec<u8>,
@@ -317,6 +321,7 @@ impl Default for DesignDocument {
             objects: vec![DesignObject::new(ObjectKind::Text)],
             samples: BTreeMap::new(),
             printer_font: String::new(),
+            printer_profiles: BTreeMap::new(),
             font: Vec::new(),
         }
     }

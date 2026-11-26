@@ -2,13 +2,107 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::{fs, io::ErrorKind, path::Path};
 
-#[derive(Clone, Copy, Default, Deserialize, Serialize)]
-pub enum Language {
-    #[default]
-    #[serde(rename = "zh-CN")]
-    Chinese,
-    #[serde(rename = "en")]
-    English,
+mod diagnostic_keys;
+mod message;
+pub use message::Message;
+
+struct LanguagePack {
+    tag: &'static str,
+    name: &'static str,
+    aliases: &'static [&'static str],
+    messages: &'static [&'static str],
+}
+
+include!(concat!(env!("OUT_DIR"), "/locales.rs"));
+
+impl Language {
+    fn pack(self) -> &'static LanguagePack {
+        &PACKS[self as usize]
+    }
+    pub fn locale(self) -> &'static str {
+        self.pack().tag
+    }
+    pub fn name(self) -> &'static str {
+        self.pack().name
+    }
+    pub fn text(self, key: Text) -> &'static str {
+        self.pack().messages[key as usize]
+    }
+
+    fn matching(tag: &str) -> Option<Self> {
+        let normalized = tag.split(['.', '@']).next()?.replace('_', "-");
+        let mut candidate = normalized.as_str();
+        loop {
+            if let Some(lang) = Self::ALL.iter().copied().find(|lang| {
+                let pack = lang.pack();
+                pack.tag.eq_ignore_ascii_case(candidate)
+                    || pack
+                        .aliases
+                        .iter()
+                        .any(|alias| alias.eq_ignore_ascii_case(candidate))
+            }) {
+                return Some(lang);
+            }
+            candidate = candidate.rsplit_once('-')?.0;
+        }
+    }
+
+    fn preferred(tags: impl IntoIterator<Item = impl AsRef<str>>) -> Self {
+        tags.into_iter()
+            .find_map(|tag| Self::matching(tag.as_ref()))
+            .unwrap_or(Self::English)
+    }
+
+    pub fn format(self, key: Text, args: &[(&str, &str)]) -> String {
+        let mut template = self.text(key);
+        let mut output = String::new();
+        while let Some((literal, tail)) = template.split_once("%{") {
+            let (name, rest) = tail.split_once('}').expect("validated locale pack");
+            output.push_str(literal);
+            if let Some((_, value)) = args.iter().find(|(arg, _)| *arg == name) {
+                output.push_str(value);
+            } else {
+                debug_assert!(false, "Missing {name} in {key:?}");
+                output.push_str(&format!("%{{{name}}}"));
+            }
+            template = rest;
+        }
+        output.push_str(template);
+        output
+    }
+
+    /// Next language in menu order, retained for two-language callers.
+    pub fn other(self) -> Self {
+        Self::ALL[(self as usize + 1) % Self::ALL.len()]
+    }
+
+    pub fn page_count(self, count: usize) -> String {
+        self.format(
+            if count == 1 {
+                Text::PageOne
+            } else {
+                Text::PageOther
+            },
+            &[("count", &count.to_string())],
+        )
+    }
+}
+
+impl Default for Language {
+    fn default() -> Self {
+        Self::preferred(sys_locale::get_locales())
+    }
+}
+impl Serialize for Language {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.locale())
+    }
+}
+impl<'de> Deserialize<'de> for Language {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let tag = String::deserialize(deserializer)?;
+        Ok(Self::matching(&tag).unwrap_or_default())
+    }
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -45,244 +139,6 @@ impl Preferences {
     }
 }
 
-impl Language {
-    pub fn locale(self) -> &'static str {
-        match self {
-            Self::Chinese => "zh-CN",
-            Self::English => "en",
-        }
-    }
-
-    pub fn other(self) -> Self {
-        match self {
-            Self::Chinese => Self::English,
-            Self::English => Self::Chinese,
-        }
-    }
-
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Chinese => "简体中文",
-            Self::English => "English",
-        }
-    }
-
-    pub fn page_count(self, count: usize) -> String {
-        match self {
-            Self::Chinese => format!("{count} 页"),
-            Self::English if count == 1 => "1 page".into(),
-            Self::English => format!("{count} pages"),
-        }
-    }
-
-    pub fn text(self, text: Text) -> &'static str {
-        let (chinese, english) = match text {
-            Text::Studio => ("工作台", "Workspace"),
-            Text::StudioDescription => ("打开或设计标签，预览并导出 PDF 或 PNG。设计稿还可导出为 ZPL。", "Open or design labels, preview them, and export PDF or PNG. Designs can also export to ZPL."),
-            Text::BarTenderExport => (
-                "这是 BarTender 设计文件（.btw）。请在 BarTender 中选择 ZPL 打印机驱动，勾选「打印到文件」，保存为 .prn 后在 Labelize Studio 中打开。",
-                labelize_printer_core::document::UnsupportedBarTender::GUIDANCE,
-            ),
-            Text::Setup => ("系统打印机", "System printer"),
-            Text::Settings => ("设置", "Settings"),
-            Text::Jobs => ("任务记录", "Jobs"),
-            Text::SetupDescription => ("添加系统打印机，或先用一份 ZPL 测试输出。", "Add the system printer or try a ZPL test print."),
-            Text::SettingsDescription => ("选择文件格式、保存目录和缺省标签尺寸。", "Choose the file format, output folder and default label size."),
-            Text::JobsDescription => ("查看任务状态，打开已保存的文件。", "Check job status and open saved files."),
-            Text::EnvironmentRefreshed => ("打印环境已刷新。", "Printer detection refreshed."),
-            Text::SettingsSaved => ("设置已保存，将用于新任务。", "Settings saved for new print jobs."),
-            Text::PrinterConfigured => ("打印机已配置，可以从系统打印窗口选择 Labelize Printer。", "Printer configured. Select Labelize Printer in the system print dialog."),
-            Text::TestSubmitted => ("测试任务已提交。文件写入后会显示为「已保存」。", "Test submitted. The job will show as saved once its files are written."),
-            Text::JobRetried => ("任务已重新排队。", "Job queued for another attempt."),
-            Text::PrinterRemoved => ("系统打印队列已移除。", "System print queue removed."),
-            Text::WorkerStopped => ("后台连接线程已退出，请重新打开应用。", "The background connection stopped. Reopen the app to reconnect."),
-            Text::InvalidWidth => ("请输入有效的标签宽度。", "Enter a valid label width."),
-            Text::InvalidHeight => ("请输入有效的标签高度。", "Enter a valid label height."),
-            Text::InvalidDirectory => ("请选择一个完整的输出目录路径。", "Choose an absolute path for the output folder."),
-            Text::InvalidMedia => ("标签宽度和高度必须为大于 0 且不超过 4000 的毫米数。", "Label width and height must be greater than 0 and at most 4000 mm."),
-            Text::ChooseOutputFolder => ("选择输出目录", "Choose output folder"),
-            Text::FolderPickerError => ("无法打开目录选择器。", "Could not open the folder picker."),
-            Text::ConfirmRemove => ("移除 Labelize Printer？", "Remove Labelize Printer?"),
-            Text::ConfirmRemoveDescription => ("系统打印窗口将移除这台打印机，已保存的文件会保留。", "This removes the printer from system print dialogs. Your saved files are retained."),
-            Text::Cancel => ("取消", "Cancel"),
-            Text::RemoveQueue => ("移除队列", "Remove queue"),
-            Text::MissingPath => ("此文件或目录尚未创建，或已被移动。", "This file or folder has not been created or has been moved."),
-            Text::OpenPathError => ("无法打开文件或目录。", "Could not open the file or folder."),
-            Text::Detecting => ("检测中…", "Detecting…"),
-            Text::Refresh => ("刷新检测", "Refresh detection"),
-            Text::Connect => ("连接后台", "Reconnect"),
-            Text::PdfFormat => ("PDF · 每个任务一份", "PDF · one file per job"),
-            Text::PngFormat => ("PNG · 每页一张", "PNG · one file per page"),
-            Text::Browse => ("选择目录…", "Browse…"),
-            Text::FilesAndLabels => ("文件与标签", "Files and labels"),
-            Text::OutputFormat => ("输出格式", "Output format"),
-            Text::RenderMode => ("渲染方式", "Rendering"),
-            Text::RasterMode => ("栅格", "Raster"),
-            Text::VectorMode => ("矢量", "Vector"),
-            Text::AntialiasOn => ("抗锯齿 · 开", "Antialias · On"),
-            Text::AntialiasOff => ("抗锯齿 · 关", "Antialias · Off"),
-            Text::PngScale => ("PNG 像素倍率", "PNG pixel scale"),
-            Text::AntialiasDescription => ("开启抗锯齿保留灰度边缘；关闭时输出黑白像素。", "Antialias retains smooth gray edges. Turn it off for black-and-white pixels."),
-            Text::VectorDescription => ("PDF 保留文字与图形；PNG 从矢量场景生成位图，物理尺寸不变。抗锯齿用于预览和 PNG。", "PDF retains text and shapes. PNG renders the scene to pixels at the same physical size. Antialias applies to previews and PNG."),
-            Text::RenderDefaultsDescription => ("用于新标签页和打印语言任务。系统栅格任务保留原像素与分辨率。", "Applies to new tabs and printer-language jobs. System raster jobs retain their original pixels and resolution."),
-            Text::OutputFolder => ("保存目录", "Output folder"),
-            Text::LabelSize => ("缺省宽度 × 高度（mm）", "Default width × height (mm)"),
-            Text::ZplResolution => ("ZPL 分辨率", "ZPL resolution"),
-            Text::DriverResolution => ("分辨率随所选驱动调整。", "Resolution follows the selected driver."),
-            Text::MediaDescription => ("ZPL 声明的尺寸优先。系统栅格保留原尺寸。", "ZPL label sizes take precedence. System raster pages keep their original size."),
-            Text::AutostartOn => ("登录时自动启动已开启", "Start at login enabled"),
-            Text::AutostartOff => ("登录时自动启动已关闭", "Start at login disabled"),
-            Text::Connected => ("后台已连接", "Connected"),
-            Text::Disconnected => ("后台未连接", "Disconnected"),
-            Text::Connecting => ("正在连接后台…", "Connecting…"),
-            Text::QueueAdded => ("系统打印机已添加", "Printer added"),
-            Text::QueueMissing => ("系统打印机尚未添加", "Printer not added"),
-            Text::SystemPrinter => ("系统打印机", "System printer"),
-            Text::InstallDriver => ("安装官方 ZDesigner ZPL 驱动后，点击「刷新检测」。", "Install the official ZDesigner ZPL driver, then refresh detection."),
-            Text::DownloadDriver => ("Zebra 驱动下载", "Download Zebra driver"),
-            Text::DriverDownloadError => ("无法打开驱动下载页。", "Could not open the driver download page."),
-            Text::ZplDriver => ("ZDesigner ZPL 驱动", "ZDesigner ZPL driver"),
-            Text::SelectDriver => ("选择驱动", "Select a driver"),
-            Text::ChooseResolution => ("请在下方选择与驱动一致的 ZPL 分辨率。", "Choose the ZPL resolution that matches your driver below."),
-            Text::DisableStatusCheck => ("在驱动设置中将 Status check type 设置为 Disabled。", "Set Status check type to Disabled in the driver settings."),
-            Text::SystemQueue => ("系统队列", "System queue"),
-            Text::BackgroundPrinting => ("关闭窗口后，后台仍可接收打印。", "The background service keeps accepting jobs when this window is closed."),
-            Text::RemovePrinter => ("移除打印机…", "Remove printer…"),
-            Text::Submitting => ("正在提交…", "Submitting…"),
-            Text::TestZpl => ("测试 ZPL 输出", "Test ZPL output"),
-            Text::NoJobs => ("暂无任务", "No jobs yet"),
-            Text::PrintFirstJob => ("从系统打印窗口选择 Labelize Printer，或提交一份测试标签。", "Select Labelize Printer in a system print dialog or submit a test label."),
-            Text::SetupFirstJob => ("先测试文件输出，或到安装向导添加系统打印机。", "Try a test print or add the system printer on the Setup page."),
-            Text::Receiving => ("接收中", "Receiving"),
-            Text::Queued => ("排队中", "Queued"),
-            Text::Processing => ("处理中", "Processing"),
-            Text::Saved => ("已保存", "Saved"),
-            Text::Failed => ("失败", "Failed"),
-            Text::SystemPrint => ("系统打印", "System print"),
-            Text::TestSource => ("测试 ZPL", "Test ZPL"),
-            Text::DesignSource => ("标签设计", "Label design"),
-            Text::OpenFolder => ("打开目录", "Open folder"),
-            Text::OpenFirstPage => ("打开第 1 页", "Open first page"),
-            Text::OpenFile => ("打开文件", "Open file"),
-            Text::Retry => ("重试", "Retry"),
-            Text::SaveAndTest => ("保存并测试输出", "Save and test"),
-            Text::Configuring => ("正在配置…", "Configuring…"),
-            Text::RepairPrinter => ("修复打印机", "Repair printer"),
-            Text::AddPrinter => ("添加打印机", "Add printer"),
-            Text::OpenOutputFolder => ("打开输出目录", "Open output folder"),
-            Text::Saving => ("正在保存…", "Saving…"),
-            Text::SaveSettings => ("保存设置", "Save settings"),
-            Text::ReconnectDescription => ("后台未连接。可重新连接后继续操作。", "The background service is disconnected. Reconnect to continue."),
-            Text::SaveLanguageError => ("无法保存语言设置。", "Could not save the language preference."),
-            Text::Quit => ("退出", "Quit"),
-        };
-        match self {
-            Self::Chinese => chinese,
-            Self::English => english,
-        }
-    }
-}
-
-// The catalog also includes messages used only by the Windows setup page.
-#[cfg_attr(not(windows), allow(dead_code))]
-pub enum Text {
-    Studio,
-    StudioDescription,
-    BarTenderExport,
-    Setup,
-    Settings,
-    Jobs,
-    SetupDescription,
-    SettingsDescription,
-    JobsDescription,
-    EnvironmentRefreshed,
-    SettingsSaved,
-    PrinterConfigured,
-    TestSubmitted,
-    JobRetried,
-    PrinterRemoved,
-    WorkerStopped,
-    InvalidWidth,
-    InvalidHeight,
-    InvalidDirectory,
-    InvalidMedia,
-    ChooseOutputFolder,
-    FolderPickerError,
-    ConfirmRemove,
-    ConfirmRemoveDescription,
-    Cancel,
-    RemoveQueue,
-    MissingPath,
-    OpenPathError,
-    Detecting,
-    Refresh,
-    Connect,
-    PdfFormat,
-    PngFormat,
-    Browse,
-    FilesAndLabels,
-    OutputFormat,
-    RenderMode,
-    RasterMode,
-    VectorMode,
-    AntialiasOn,
-    AntialiasOff,
-    PngScale,
-    AntialiasDescription,
-    VectorDescription,
-    RenderDefaultsDescription,
-    OutputFolder,
-    LabelSize,
-    ZplResolution,
-    DriverResolution,
-    MediaDescription,
-    AutostartOn,
-    AutostartOff,
-    Connected,
-    Disconnected,
-    Connecting,
-    QueueAdded,
-    QueueMissing,
-    SystemPrinter,
-    InstallDriver,
-    DownloadDriver,
-    DriverDownloadError,
-    ZplDriver,
-    SelectDriver,
-    ChooseResolution,
-    DisableStatusCheck,
-    SystemQueue,
-    BackgroundPrinting,
-    RemovePrinter,
-    Submitting,
-    TestZpl,
-    NoJobs,
-    PrintFirstJob,
-    SetupFirstJob,
-    Receiving,
-    Queued,
-    Processing,
-    Saved,
-    Failed,
-    SystemPrint,
-    TestSource,
-    DesignSource,
-    OpenFolder,
-    OpenFirstPage,
-    OpenFile,
-    Retry,
-    SaveAndTest,
-    Configuring,
-    RepairPrinter,
-    AddPrinter,
-    OpenOutputFolder,
-    Saving,
-    SaveSettings,
-    ReconnectDescription,
-    SaveLanguageError,
-    Quit,
-}
-
 #[cfg(test)]
 mod preference_tests {
     use super::*;
@@ -302,5 +158,121 @@ mod preference_tests {
             serde_json::from_slice(&serde_json::to_vec(&switched).unwrap()).unwrap();
         assert!(!roundtrip.automatic_updates);
         assert_eq!(roundtrip.last_update_check, Some(123));
+    }
+}
+
+#[cfg(test)]
+mod locale_tests {
+    use super::*;
+
+    #[test]
+    fn first_run_uses_the_first_supported_system_language() {
+        for (list, expected) in [
+            (vec!["ja-JP", "zh-Hans-SG", "en-US"], Language::Chinese),
+            (vec!["de", "en_GB.UTF-8", "zh"], Language::English),
+            (vec!["ZH_cn.UTF-8"], Language::Chinese),
+            (vec!["zh-HK"], Language::Chinese),
+            (vec!["fr-FR", "de-DE"], Language::English),
+            (vec![], Language::English),
+        ] {
+            assert_eq!(Language::preferred(list), expected);
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("desktop.json");
+        assert_eq!(
+            Preferences::load(&path).unwrap().language,
+            Language::preferred(sys_locale::get_locales())
+        );
+        let mut prefs = Preferences::default();
+        for &language in Language::ALL {
+            prefs.language = language;
+            prefs.save(&path).unwrap();
+            assert_eq!(Preferences::load(&path).unwrap().language, language);
+            assert_eq!(serde_json::to_value(language).unwrap(), language.locale());
+        }
+        fs::write(
+            &path,
+            r#"{"language":"unavailable","automatic_updates":false,"last_update_check":42}"#,
+        )
+        .unwrap();
+        let recovered = Preferences::load(&path).unwrap();
+        assert_eq!(recovered.language, Language::default());
+        assert!(!recovered.automatic_updates);
+        assert_eq!(recovered.last_update_check, Some(42));
+    }
+
+    #[test]
+    fn missing_variable_hint_recognizes_current_and_saved_diagnostics() {
+        use labelize_printer_core::design::{DesignObject, ObjectKind};
+
+        let mut field = DesignObject::new(ObjectKind::Text);
+        field.variable = true;
+        field.text = "Plain text".into();
+        let diagnostic = field.variable_names().unwrap_err().to_string();
+        assert_eq!(
+            diagnostic,
+            Language::English.text(Text::DiagnosticVariableExample)
+        );
+        for &language in Language::ALL {
+            let hint = language.text(Text::DiagnosticVariableExample);
+            assert_eq!(language.diagnostic(&diagnostic), hint);
+            assert_eq!(
+                language.diagnostic("Enter a variable such as {{order_no}}"),
+                hint
+            );
+        }
+    }
+
+    #[test]
+    fn switching_pack_preserves_field_names_and_external_details() {
+        let field = "order_%{field}{{number}}";
+        let error = Message::formatted(Text::RecordFieldString, [("field", field.to_string())]);
+        assert_eq!(
+            error.display(Language::English),
+            format!("Field {field} must be a string.")
+        );
+        assert_eq!(
+            error.display(Language::Chinese),
+            format!("字段 {field} 的值必须是字符串。")
+        );
+        assert_eq!(
+            Language::Chinese
+                .diagnostic("Error: Parse error: No variable fields in this template\n"),
+            "解析错误：此模板中没有可填充的变量字段。"
+        );
+        assert_eq!(
+            Language::Chinese.diagnostic("Object 3 (order_no): Incorrect check digit"),
+            "对象 3（order_no）：校验位不正确。"
+        );
+        assert_eq!(
+            Language::Chinese.diagnostic("Expected 12 digits with an optional check digit"),
+            "请输入 12 位数字，可在末尾加上校验位。"
+        );
+        assert_eq!(
+            Language::English.diagnostic("Value cannot be encoded as US-ASCII"),
+            "Value cannot be encoded as US-ASCII"
+        );
+        assert_eq!(
+            Language::Chinese.diagnostic("future driver error /tmp/订单.zpl"),
+            "future driver error /tmp/订单.zpl"
+        );
+        assert_eq!(
+            Language::Chinese.field_kind("ean13-caption"),
+            "EAN-13 可读文字"
+        );
+        assert_eq!(Language::Chinese.field_kind("block"), "文本块");
+        assert_eq!(
+            Language::Chinese.diagnostic(
+                "Parse error: Invalid field expression at line 6: Invalid template variable name"
+            ),
+            "解析错误：第 6 行的字段表达式无效：模板变量名无效。"
+        );
+        assert_eq!(
+            Language::Chinese.diagnostic("Error: unknown OS failure  \n"),
+            "Error: unknown OS failure  \n"
+        );
+        assert_eq!(Language::English.page_count(1), "1 page");
+        assert_eq!(Language::English.page_count(2), "2 pages");
+        assert_eq!(Language::Chinese.page_count(1), "1 页");
     }
 }
