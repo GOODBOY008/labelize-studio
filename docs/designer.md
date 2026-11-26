@@ -2,7 +2,7 @@
 
 [README](../README.md) · [Architecture](architecture.md) · [Acceptance](acceptance.md)
 
-The visual designer shipped in **Labelize Studio v0.4.0**. ZPL template export requires a development build with variable binding. Existing Labelize Printer templates remain compatible.
+The visual designer shipped in **Labelize Studio v0.4.0**. **v0.6.0** adds fillable printer templates and parameter previews for all five printer languages. Existing Labelize Printer templates remain compatible.
 
 Choose **Workspace → New design**, or open the [showcase template](../examples/designer-showcase.labelize.json). Objects are listed from front to back. Select an object to see the properties appropriate to its type. Preview and PDF/PNG export use the same rendering rules.
 
@@ -49,7 +49,7 @@ Templates embed images and the document font. Studio reads versions 1 through 4.
 
 PDF combines the document pages into one file. PNG saves one image per page. Exports capture the content and options when submitted and continue in the background after a tab or window closes.
 
-### Export a design as ZPL (unreleased)
+### Export a design as ZPL
 
 Select the target printer's **8 dpmm** or **12 dpmm** resolution under **Page settings**. In **Export**, choose **ZPL** and the output folder, then click **Export ZPL**. The completed job contains a single `.zpl` file. To preview it again in Studio, open it as a label file and select the same resolution.
 
@@ -66,7 +66,7 @@ The exporter rounds the outer label dimensions up to whole printer dots and embe
 
 Use representative sample values when choosing field widths and alignment. An opaque foreground layer can erase ink from a variable beneath it. Reserve space for the longest value and the barcode quiet zones.
 
-## Rendering quality (unreleased)
+## Rendering quality
 
 In **Export → Rendering**, choose **Raster** for the existing output or **Vector** to retain native text, shape outlines and barcode modules in PDF. Imported bitmap images remain images. Both modes preserve object order, backgrounds, clipping, quarter-turn rotations and physical label dimensions.
 

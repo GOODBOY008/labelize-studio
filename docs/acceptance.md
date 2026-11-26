@@ -10,7 +10,7 @@ This record separates builds, automated protocol checks, system printing, and na
 - In a Debian 12 amd64 container on an Apple Silicon host, the workspace tests passed. GPUI opened and rendered both pages under Xvfb/Openbox and nested Weston with software Vulkan. The installed debug DEB processed a two-copy CUPS print through PAPPL and removed its queue and package afterward.
 - On macOS, the Windows x64 GNU release cross-build and NSIS packaging passed after removal of the Windows debug shader patch. Windows SDK FXC ran under Wine; all 16 compiled shaders were found in the desktop executable. Extraction confirmed that the desktop, daemon, and updater matched the release build outputs byte for byte. Native Windows MSVC build and installer execution were not part of this check. The [remaining acceptance work](#remaining-acceptance-work) tracks the native Windows ZDesigner and Linux desktop-session checks.
 
-## Antialias and vector output (unreleased source)
+## Antialias and vector output (pre-release checks)
 
 Verified locally on 2026-11-10 against the development tree based on v0.4.0 (`d8e2232`). These changes enable Labelize's existing vector feature and add a native designer scene; vendored parser and renderer sources are unchanged. Existing settings retain raster output with antialiasing off and PNG scale 1.
 
@@ -25,7 +25,7 @@ Verified locally on 2026-11-10 against the development tree based on v0.4.0 (`d8
 
 Local evidence is retained in `.cache/vector-*.log`, `.cache/vector-qa/report.json` and `.cache/vector-preview/ui-evidence.json`. Representative PDFs, PNGs, inputs and the independent verification script are under `.cache/vector-qa/`. Native UI checks used separate preview bundles and a private data directory under `.cache/vector-preview/`; the installed app, user settings/drafts and `LabelizePrinter` queue were left intact.
 
-## In-app updates (unreleased source)
+## In-app updates (pre-release checks)
 
 Implemented on `codex/in-app-updates`, based on `bff8edf` (v0.3.0). The local packages below use development profiles and retain the workspace's 0.3.0 version; they are QA artifacts, not a newly published release.
 
@@ -101,7 +101,7 @@ The implementation also passed all five jobs in [CI run 42617748064](https://git
 
 The Mac was unlocked for this follow-up pass. Coordinate mouse events from the automation tool remained intermittent in the narrow window; user confirmation and successful keyboard interactions are recorded separately above. Chinese IME composition, real system display scaling, missing-file relocation, and Windows/Linux desktop behavior still require native checks. Historical printing evidence below applies to the unchanged backend, not automatically to the new desktop interface.
 
-## Tab preview responsiveness (unreleased source)
+## Tab preview responsiveness (pre-release checks)
 
 Local checks on 2026-11-10 used the current macOS 27.2 Apple Silicon host and an isolated app/data directory under `.cache/tab-preview-qa`. These results apply to this source milestone, not to the installed app or a published package.
 
@@ -111,7 +111,7 @@ Local checks on 2026-11-10 used the current macOS 27.2 Apple Silicon host and an
 - **Edited content and pagination:** Editing the large label changed its preview from `LARGE C` to `UPDATED C`; switching away and back retained the new content. Navigating the three-page label to page 2 and switching tabs preserved page 2 and its preview. Keyboard interactions were used because automated mouse clicks remained intermittent on this host.
 - **Build checks:** Native macOS compilation, Windows x64 GNU target checking, Debian 12 amd64 desktop checking, workspace Clippy, and formatting checks passed. The vendored Labelize parsers, rendering, output encoding, and task processing were unchanged. No new GitHub Actions run or Windows/Linux desktop acceptance is claimed by these local checks.
 
-## Expanded designer (unreleased source)
+## Expanded designer (pre-release checks)
 
 ### Desktop language packs
 

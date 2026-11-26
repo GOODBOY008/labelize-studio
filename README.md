@@ -14,7 +14,7 @@ The app also provides a **local virtual printer**: select **Labelize Printer** i
 
 Built with **Rust + GPUI**, the desktop app uses the [Labelize engine](https://github.com/GOODBOY008/labelize) for printer-language parsing and rendering. Labelize is the reusable engine, available as a library, CLI, HTTP service, WebAssembly package, and Android library; this project adds the desktop workspace, visual designer, virtual printer, and job management.
 
-> **v0.5.0** adds searchable vector PDF, optional antialiasing, and 1×–4× PNG export. That release uses Labelize 1.12.0. See [Migration](docs/migration.md) before upgrading and [Acceptance](docs/acceptance.md) for verified environments and remaining checks.
+> **v0.6.0** lets you design a label once, preview it with real data, and export a reusable printer template for ZPL, TSPL/TSC, EPL2, CPCL or DPL. Studio uses Labelize 1.13.0 and includes English and Simplified Chinese language packs. [Template guide and integration examples](docs/print-templates.md)
 
 ## Screenshots
 
@@ -39,7 +39,8 @@ Captured on macOS from development commit `7155d05` using synthetic sample data.
 | PDF/PNG export | Save all pages as one raster PDF or one PNG per page. | v0.2.0 |
 | Rendering quality | Optional antialiasing, native vector PDF, and 1–4× PNG rendering from a vector scene. | v0.5.0 |
 | Portable templates | Save editable `.labelize.json` templates with embedded images and imported fonts. | v0.2.0 |
-| ZPL design export | Export the design as a monochrome graphic for an 8 or 12 dots/mm ZPL printer. | Unreleased |
+| ZPL design export | Export the design as a monochrome graphic for an 8 or 12 dots/mm ZPL printer. | v0.6.0 |
+| Fillable printer templates | Bind fields, preview a JSON record, and export a native template for any of the five printer languages. | v0.6.0 |
 | Virtual printer | Select a local system printer and capture jobs as PDF or PNG while the desktop window is closed. | v0.1.2 |
 | Job management | Choose an output folder, inspect results, open saved files, and retry failed jobs. | v0.1.2 |
 | Software updates | Stable-release checks, verified full installers, and package-manager-aware handoff. | v0.4.0 |
@@ -109,7 +110,7 @@ Each file opens in its own tab; opening the same path again selects the existing
 
 Choose PDF or PNG and an output folder in the right-hand inspector, then use the single **Export PDF/PNG** button. PDF combines all pages; PNG writes one image per page. These choices belong to the current tab and do not change system-queue defaults. Export captures the content and options at the time of submission. Once accepted, the job continues in the background while you edit or close the tab; **Jobs** reports success only after the files are committed.
 
-### Rendering quality (unreleased)
+### Rendering quality
 
 The inspector's **Export → Rendering** controls apply to printer-language files and visual designs:
 
@@ -127,7 +128,7 @@ Version **0.4.0** expands the designer to 15 object types: text, rectangles, ell
 
 **Save** writes back to the source file, asking for a path only for an untitled document. **Save as** is in the overflow menu. A design is saved as a portable `.labelize.json` template containing its objects, images, and imported font. Reopen the file to continue editing. For Chinese or other text outside the default font's coverage, import a compatible TrueType/OpenType font of up to 32 MiB. Missing glyphs, overflowing text, and undersized barcodes produce errors. Images are composited over white and rendered in monochrome.
 
-In the development build, select the target printer's resolution under **Page settings**, choose **ZPL** in the inspector, then click **Export ZPL**. Open the saved `.zpl` from **Jobs** or reopen it in the workspace at the same resolution. The file embeds the design as a monochrome graphic. Keep the `.labelize.json` template to edit individual objects.
+Select the target printer's resolution under **Page settings**, choose **ZPL** in the inspector, then click **Export ZPL**. Open the saved `.zpl` from **Jobs** or reopen it in the workspace at the same resolution. The file embeds the design as a monochrome graphic. Keep the `.labelize.json` template to edit individual objects.
 
 To print data from your application, bind a field such as `{{name}}` to text or barcodes in **New design**. Choose **ZPL**, **TSPL/TSC**, **EPL2**, **CPCL** or **DPL** and select **Parameter preview** to enter field values or paste a JSON record. **Export print template…** saves a reusable file that Studio can also reopen for parameter preview. Bundle the resulting file with your application and fill each record using Labelize’s CLI, HTTP API or SDK. The shipping example uses the same order number as text, Code 128 and QR. [Editable shipping label](examples/print-templates/shipping.labelize.json) · [Application integration and language support](docs/print-templates.md)
 
@@ -139,9 +140,9 @@ Opening an existing printer-language file shows its source and preview. The embe
 | Cmd/Ctrl+N | Create a design |
 | Cmd/Ctrl+S / Cmd/Ctrl+Shift+S | Save / Save as |
 | Cmd/Ctrl+E | Export the active document |
-| Cmd/Ctrl+Z / Cmd/Ctrl+Shift+Z | Undo / redo design changes outside text inputs (unreleased) |
-| Arrow / Shift+Arrow | Move the selected object 0.1 / 1 mm with canvas focus (unreleased) |
-| Delete / Backspace | Delete the selected unlocked object with canvas focus (unreleased) |
+| Cmd/Ctrl+Z / Cmd/Ctrl+Shift+Z | Undo / redo design changes outside text inputs |
+| Arrow / Shift+Arrow | Move the selected object 0.1 / 1 mm with canvas focus |
+| Delete / Backspace | Delete the selected unlocked object with canvas focus |
 | Cmd/Ctrl+W | Close the active tab |
 | Ctrl+Tab / Ctrl+Shift+Tab | Next / previous document |
 | Cmd/Ctrl+1 / 2 / 3 | Workspace / Recent files / Jobs |

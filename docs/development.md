@@ -80,7 +80,7 @@ target/debug/labelize-printer-daemon retry TASK_UUID --wait
 
 Since v0.2.0, the daemon accepts ZPL, EPL, TSPL/TSC, CPCL, DPL, and `.labelize.json` templates through `submit`. The desktop executable can also take a label file as its first argument.
 
-In a development build, `submit --format` overrides the output format for one job. Choose `pdf` or `png` for any label document, or `zpl` for a design template. The job uses the configured output directory and resolution.
+Since v0.6.0, `submit --format` overrides the output format for one job. Choose `pdf` or `png` for any label document, or `zpl` for a design template. The job uses the configured output directory and resolution.
 
 To export a host-filled template, run `target/debug/labelize-printer-daemon export-template examples/print-templates/shipping.labelize.json --language tspl --dpmm 8 --output shipping.tpl.tspl`. The accepted languages are `zpl` (default), `tspl` (`tsc`), `epl` (`epl2`), `cpcl` and `dpl`. The desktop uses the same exporter in an isolated worker. Studio pins the crates.io release of Labelize 1.13.0. Run `cargo test -p labelize-printer-core --locked --test zpl_templates --test print_templates` for fixed native jobs, pixel comparisons and independent barcode decoding. Set `LABELIZE_CLI` to the 1.13.0 executable to compare all 20 parameter previews against the CLI. [Application integration](print-templates.md)
 
