@@ -1,7 +1,7 @@
 //! Crash-safe local workspace snapshots. Drafts are never written to source files.
 use anyhow::{ensure, Context, Result};
 use labelize_printer_core::{
-    design::DesignDocument,
+    design::{DesignDocument, TemplateLanguage},
     document::DocumentKind,
     paths::{atomic_write, private_dir},
     Settings, MAX_INPUT_BYTES,
@@ -26,6 +26,8 @@ pub struct Draft {
     /// Digest of the last content read from / saved to the source path.
     pub fingerprint: Option<String>,
     pub kind: DocumentKind,
+    #[serde(default)]
+    pub template_language: TemplateLanguage,
     pub design: Option<DesignDocument>,
     #[serde(skip)]
     pub source: Vec<u8>,
@@ -49,6 +51,7 @@ impl Draft {
             file: None,
             fingerprint: None,
             kind: DocumentKind::Design,
+            template_language: TemplateLanguage::Zpl,
             design: Some(DesignDocument {
                 width_mm: options.width_mm,
                 height_mm: options.height_mm,
@@ -319,6 +322,16 @@ mod tests {
         design.objects[1].style.locked = true;
         design.samples.insert("field_2".into(), "试样-002".into());
         design.printer_font = "E:MYFONT.TTF".into();
+        draft.template_language = TemplateLanguage::Tspl;
+        design
+            .set_printer_profile(
+                TemplateLanguage::Tspl,
+                PrinterProfile {
+                    font: "TSS24.BF2".into(),
+                    encoding: TemplateEncoding::Utf8,
+                },
+            )
+            .unwrap();
         draft.selected = Some(1);
         draft.fields = vec![String::new(); DESIGN_FIELD_COUNT];
         draft.fields[12] = "-".into();
@@ -335,6 +348,7 @@ mod tests {
         let (restored, warnings) = store.load();
         assert!(warnings.is_empty());
         assert_eq!(restored.tabs[0].design, draft.design);
+        assert_eq!(restored.tabs[0].template_language, TemplateLanguage::Tspl);
         assert_eq!(restored.tabs[0].options, draft.options);
         assert_eq!(restored.tabs[0].selected, Some(1));
         assert_eq!(restored.tabs[0].fields[12], "-");
@@ -345,6 +359,10 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let store = SessionStore::new(temp.path().into());
         let mut draft = Draft::new(Settings::default());
+        let mut legacy = serde_json::to_value(&draft).unwrap();
+        legacy.as_object_mut().unwrap().remove("template_language");
+        draft = serde_json::from_value(legacy).unwrap();
+        assert_eq!(draft.template_language, TemplateLanguage::Zpl);
         draft.fields = vec![String::new(); 17];
         draft.fields[8] = "{{literal}}".into();
         store

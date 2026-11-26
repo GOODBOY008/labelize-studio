@@ -30,14 +30,14 @@ impl Studio {
             .flex()
             .flex_col()
             .gap_3()
-            .child(section(self.t("对象属性", "OBJECT PROPERTIES")))
+            .child(section(self.t(Text::ObjectProperties)))
             .child(
                 div()
                     .text_sm()
                     .font_weight(FontWeight::MEDIUM)
                     .child(self.object_name(o.kind)),
             )
-            .child(self.field(9, self.t("名称", "Name")))
+            .child(self.field(9, self.t(Text::Name)))
             .child(
                 row()
                     .child(
@@ -49,9 +49,9 @@ impl Studio {
                                 IconName::EyeOff
                             })
                             .label(if style.visible {
-                                self.t("可见", "Visible")
+                                self.t(Text::Visible)
                             } else {
-                                self.t("已隐藏", "Hidden")
+                                self.t(Text::Hidden)
                             })
                             .on_click(cx.listener(|s, _, w, cx| {
                                 if let Some(i) = s.selected {
@@ -64,9 +64,9 @@ impl Studio {
                             .small()
                             .selected(style.locked)
                             .label(if style.locked {
-                                self.t("解锁", "Unlock")
+                                self.t(Text::Unlock)
                             } else {
-                                self.t("锁定", "Lock")
+                                self.t(Text::Lock)
                             })
                             .on_click(cx.listener(|s, _, w, cx| {
                                 if let Some(i) = s.selected {
@@ -76,10 +76,12 @@ impl Studio {
                     ),
             )
             .when(style.locked, |d| {
-                d.child(div().text_xs().text_color(rgb(MUTED)).child(self.t(
-                    "解锁后可移动或编辑此对象。",
-                    "Unlock to move or edit this object.",
-                )))
+                d.child(
+                    div()
+                        .text_xs()
+                        .text_color(rgb(MUTED))
+                        .child(self.t(Text::UnlockHelp)),
+                )
             })
             .child(
                 field_row()
@@ -88,10 +90,10 @@ impl Studio {
             )
             .child(
                 field_row()
-                    .child(self.field(4, self.t("宽度 · mm", "Width · mm")))
-                    .child(self.field(5, self.t("高度 · mm", "Height · mm"))),
+                    .child(self.field(4, self.t(Text::WidthMm)))
+                    .child(self.field(5, self.t(Text::HeightMm))),
             )
-            .child(section(self.t("顺时针旋转", "ROTATION")))
+            .child(section(self.t(Text::Rotation)))
             .child(row().children([0, 90, 180, 270].into_iter().map(|angle| {
                 Button::new(("object-rotation", angle as usize))
                     .small()
@@ -115,7 +117,7 @@ impl Studio {
                         .small()
                         .selected(o.variable)
                         .disabled(style.locked)
-                        .label(self.t("绑定变量", "Bind variables"))
+                        .label(self.t(Text::BindVariables))
                         .on_click(cx.listener(|s, _, w, cx| {
                             if let Err(e) = s.edit_design(w, cx, |d, i| {
                                 d.set_variable(i, !d.objects[i].variable)?;
@@ -128,13 +130,13 @@ impl Studio {
                 .child(self.field(
                     8,
                     if o.variable {
-                        self.t("模板内容 · {{order_no}}", "Template content · {{order_no}}")
+                        self.t(Text::TemplateContent)
                     } else {
-                        self.t("内容", "Content")
+                        self.t(Text::Content)
                     },
                 ));
             if o.variable {
-                content = content.child(section(self.t("共享样例值", "SHARED SAMPLE VALUES")));
+                content = content.child(section(self.t(Text::SampleValues)));
                 for (name, input) in &self.sample_inputs {
                     content = content.child(
                         div()
@@ -151,19 +153,16 @@ impl Studio {
             || (o.kind.is_barcode() && style.human_readable && !o.kind.is_matrix())
         {
             content = content
-                .child(self.field(6, self.t("字号 · mm", "Font size · mm")))
-                .child(section(self.t("字体", "FONT")))
+                .child(self.field(6, self.t(Text::FontSize)))
+                .child(section(self.t(Text::Font)))
                 .child(self.style_choices(
                     "object-font",
                     style.font,
                     [
-                        (TextFont::Document, self.t("文档字体", "Document")),
-                        (TextFont::Monospace, self.t("等宽", "Mono")),
-                        (TextFont::BoldMonospace, self.t("等宽粗体", "Mono bold")),
-                        (
-                            TextFont::CondensedBold,
-                            self.t("紧凑粗体", "Condensed bold"),
-                        ),
+                        (TextFont::Document, self.t(Text::DocumentFont)),
+                        (TextFont::Monospace, self.t(Text::MonoFont)),
+                        (TextFont::BoldMonospace, self.t(Text::MonoBoldFont)),
+                        (TextFont::CondensedBold, self.t(Text::CondensedBoldFont)),
                     ],
                     |s, v| s.font = v,
                     cx,
@@ -175,39 +174,35 @@ impl Studio {
                     "text-wrap",
                     style.wrap,
                     [
-                        (false, self.t("手动换行", "Manual breaks")),
-                        (true, self.t("自动换行", "Wrap text")),
+                        (false, self.t(Text::ManualBreaks)),
+                        (true, self.t(Text::WrapText)),
                     ],
                     |s, v| s.wrap = v,
                     cx,
                 ))
-                .child(self.field(10, self.t("行距 · 倍数", "Line spacing · factor")));
+                .child(self.field(10, self.t(Text::LineSpacing)));
         }
         if o.kind.is_shape() {
-            content = content.child(self.field(7, self.t("线宽 · mm", "Stroke · mm")));
+            content = content.child(self.field(7, self.t(Text::Stroke)));
             if o.kind != ObjectKind::Line {
                 content = content.child(self.style_choices(
                     "shape-filled",
                     style.filled,
-                    [
-                        (false, self.t("描边", "Outline")),
-                        (true, self.t("实心", "Filled")),
-                    ],
+                    [(false, self.t(Text::Outline)), (true, self.t(Text::Filled))],
                     |s, v| s.filled = v,
                     cx,
                 ));
             }
             if o.kind == ObjectKind::Rectangle {
-                content =
-                    content.child(self.field(11, self.t("圆角半径 · mm", "Corner radius · mm")));
+                content = content.child(self.field(11, self.t(Text::CornerRadius)));
             }
             if o.kind == ObjectKind::Line {
                 content = content.child(self.style_choices(
                     "line-direction",
                     style.line_direction,
                     [
-                        (LineDirection::Horizontal, self.t("水平", "Horizontal")),
-                        (LineDirection::Vertical, self.t("垂直", "Vertical")),
+                        (LineDirection::Horizontal, self.t(Text::Horizontal)),
+                        (LineDirection::Vertical, self.t(Text::Vertical)),
                         (LineDirection::Down, "↘"),
                         (LineDirection::Up, "↗"),
                     ],
@@ -222,43 +217,49 @@ impl Studio {
                     "image-fit",
                     style.image_fit,
                     [
-                        (ImageFit::Contain, self.t("完整显示", "Contain")),
-                        (ImageFit::Cover, self.t("裁切填充", "Cover")),
-                        (ImageFit::Stretch, self.t("拉伸", "Stretch")),
+                        (ImageFit::Contain, self.t(Text::Contain)),
+                        (ImageFit::Cover, self.t(Text::Cover)),
+                        (ImageFit::Stretch, self.t(Text::Stretch)),
                     ],
                     |s, v| s.image_fit = v,
                     cx,
                 ))
-                .child(self.field(16, self.t("黑白阈值 · 0–255", "Threshold · 0–255")))
+                .child(self.field(16, self.t(Text::Threshold)))
                 .child(
                     Button::new("replace-image")
                         .small()
-                        .label(self.t("替换图片…", "Replace image…"))
+                        .label(self.t(Text::ReplaceImage))
                         .disabled(style.locked || self.loading)
                         .on_click(cx.listener(|s, _, w, cx| s.pick_file(3, w, cx))),
                 );
         }
         if o.kind.is_barcode() {
             content = content
-                .child(section(self.t("条码参数", "BARCODE")))
-                .child(self.field(12, self.t("模块宽度 · mm", "Module width · mm")))
-                .child(self.field(13, self.t("静区 · 模块数", "Quiet zone · modules")))
-                .child(div().text_xs().text_color(rgb(MUTED)).child(format!(
-                    "{} {}",
-                    self.t("0 表示自动；静区最少", "0 = automatic; minimum quiet zone:"),
-                    o.kind.minimum_quiet()
-                )))
-                .child(div().text_xs().text_color(rgb(MUTED)).child(self.t(
-                    "模块宽度按当前分辨率取整到像素。",
-                    "Module width rounds to whole dots at this resolution.",
-                )));
+                .child(section(self.t(Text::BarcodeSettings)))
+                .child(self.field(12, self.t(Text::ModuleWidth)))
+                .child(self.field(13, self.t(Text::QuietZone)))
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(rgb(MUTED))
+                        .child(self.language.format(
+                            Text::QuietZoneMinimum,
+                            &[("modules", &o.kind.minimum_quiet().to_string())],
+                        )),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(rgb(MUTED))
+                        .child(self.t(Text::WholeDots)),
+                );
             if !o.kind.is_matrix() {
                 content = content.child(self.style_choices(
                     "barcode-caption",
                     style.human_readable,
                     [
-                        (false, self.t("隐藏文字", "Hide caption")),
-                        (true, self.t("显示文字", "Show caption")),
+                        (false, self.t(Text::HideCaption)),
+                        (true, self.t(Text::ShowCaption)),
                     ],
                     |s, v| s.human_readable = v,
                     cx,
@@ -266,9 +267,8 @@ impl Studio {
             }
             match o.kind {
                 ObjectKind::Qr => {
-                    content = content
-                        .child(section(self.t("纠错级别", "ERROR CORRECTION")))
-                        .child(self.style_choices(
+                    content = content.child(section(self.t(Text::ErrorCorrection))).child(
+                        self.style_choices(
                             "qr-ecc",
                             style.qr_ecc,
                             [
@@ -279,15 +279,16 @@ impl Studio {
                             ],
                             |s, v| s.qr_ecc = v,
                             cx,
-                        ));
+                        ),
+                    );
                 }
                 ObjectKind::DataMatrix => {
                     content = content.child(self.style_choices(
                         "matrix-shape",
                         style.matrix_shape,
                         [
-                            (MatrixShape::Square, self.t("方形", "Square")),
-                            (MatrixShape::Rectangle, self.t("矩形", "Rectangular")),
+                            (MatrixShape::Square, self.t(Text::Square)),
+                            (MatrixShape::Rectangle, self.t(Text::Rectangular)),
                         ],
                         |s, v| s.matrix_shape = v,
                         cx,
@@ -295,34 +296,38 @@ impl Studio {
                 }
                 ObjectKind::Pdf417 => {
                     content = content
-                        .child(self.field(14, self.t("列数 · 0 自动", "Columns · 0 auto")))
-                        .child(self.field(15, self.t("纠错级别 · 0–8", "Error correction · 0–8")));
+                        .child(self.field(14, self.t(Text::PdfColumns)))
+                        .child(self.field(15, self.t(Text::PdfCorrection)));
                 }
                 ObjectKind::Ean13 | ObjectKind::Ean8 | ObjectKind::Upca => {
-                    content = content.child(div().text_xs().text_color(rgb(MUTED)).child(self.t(
-                        "可输入完整号码或省略最后一位校验位。",
-                        "Enter all digits, or omit the final check digit.",
-                    )));
+                    content = content.child(
+                        div()
+                            .text_xs()
+                            .text_color(rgb(MUTED))
+                            .child(self.t(Text::OptionalCheckDigit)),
+                    );
                 }
                 ObjectKind::Itf => {
-                    content = content.child(div().text_xs().text_color(rgb(MUTED)).child(self.t(
-                        "输入偶数位数字；不会自动补位。",
-                        "Use an even number of digits; no automatic padding.",
-                    )));
+                    content = content.child(
+                        div()
+                            .text_xs()
+                            .text_color(rgb(MUTED))
+                            .child(self.t(Text::EvenDigits)),
+                    );
                 }
                 _ => {}
             }
         }
         if o.kind == ObjectKind::Text || o.kind == ObjectKind::Image || o.kind.is_barcode() {
             content = content
-                .child(section(self.t("内容对齐", "CONTENT ALIGNMENT")))
+                .child(section(self.t(Text::ContentAlignment)))
                 .child(self.style_choices(
                     "content-horizontal",
                     style.horizontal,
                     [
-                        (HorizontalAlign::Left, self.t("左", "Left")),
-                        (HorizontalAlign::Center, self.t("居中", "Center")),
-                        (HorizontalAlign::Right, self.t("右", "Right")),
+                        (HorizontalAlign::Left, self.t(Text::Left)),
+                        (HorizontalAlign::Center, self.t(Text::Center)),
+                        (HorizontalAlign::Right, self.t(Text::Right)),
                     ],
                     |s, v| s.horizontal = v,
                     cx,
@@ -332,9 +337,9 @@ impl Studio {
                     "content-vertical",
                     style.vertical,
                     [
-                        (VerticalAlign::Top, self.t("上", "Top")),
-                        (VerticalAlign::Middle, self.t("居中", "Middle")),
-                        (VerticalAlign::Bottom, self.t("下", "Bottom")),
+                        (VerticalAlign::Top, self.t(Text::Top)),
+                        (VerticalAlign::Middle, self.t(Text::Middle)),
+                        (VerticalAlign::Bottom, self.t(Text::Bottom)),
                     ],
                     |s, v| s.vertical = v,
                     cx,
@@ -342,28 +347,28 @@ impl Studio {
             }
         }
         content = content
-            .child(section(self.t("对象背景", "BACKGROUND")))
+            .child(section(self.t(Text::Background)))
             .child(self.style_choices(
                 "object-background",
                 style.background,
                 [
-                    (Background::Transparent, self.t("透明", "Transparent")),
-                    (Background::White, self.t("白底", "White")),
-                    (Background::Black, self.t("反白", "Black")),
+                    (Background::Transparent, self.t(Text::Transparent)),
+                    (Background::White, self.t(Text::White)),
+                    (Background::Black, self.t(Text::Black)),
                 ],
                 |s, v| s.background = v,
                 cx,
             ))
-            .child(section(self.t("相对标签对齐", "ALIGN TO LABEL")))
+            .child(section(self.t(Text::AlignToLabel)))
             .child(
                 row().children(
                     [
-                        (Alignment::Left, self.t("左", "Left")),
-                        (Alignment::Center, self.t("水平居中", "H center")),
-                        (Alignment::Right, self.t("右", "Right")),
-                        (Alignment::Top, self.t("上", "Top")),
-                        (Alignment::Middle, self.t("垂直居中", "V center")),
-                        (Alignment::Bottom, self.t("下", "Bottom")),
+                        (Alignment::Left, self.t(Text::Left)),
+                        (Alignment::Center, self.t(Text::HorizontalCenter)),
+                        (Alignment::Right, self.t(Text::Right)),
+                        (Alignment::Top, self.t(Text::Top)),
+                        (Alignment::Middle, self.t(Text::VerticalCenter)),
+                        (Alignment::Bottom, self.t(Text::Bottom)),
                     ]
                     .into_iter()
                     .enumerate()
@@ -378,14 +383,14 @@ impl Studio {
                     }),
                 ),
             )
-            .child(section(self.t("图层顺序", "LAYER ORDER")))
+            .child(section(self.t(Text::LayerOrder)))
             .child(
                 row().children(
                     [
-                        (LayerOrder::Front, self.t("置顶", "To front")),
-                        (LayerOrder::Raise, self.t("上移", "Forward")),
-                        (LayerOrder::Lower, self.t("下移", "Backward")),
-                        (LayerOrder::Back, self.t("置底", "To back")),
+                        (LayerOrder::Front, self.t(Text::BringToFront)),
+                        (LayerOrder::Raise, self.t(Text::MoveForward)),
+                        (LayerOrder::Lower, self.t(Text::MoveBackward)),
+                        (LayerOrder::Back, self.t(Text::SendToBack)),
                     ]
                     .into_iter()
                     .enumerate()
@@ -404,7 +409,7 @@ impl Studio {
                         Button::new("duplicate-object")
                             .small()
                             .icon(IconName::Copy)
-                            .label(self.t("复制", "Duplicate"))
+                            .label(self.t(Text::Duplicate))
                             .on_click(cx.listener(|s, _, w, cx| s.duplicate(w, cx))),
                     )
                     .child(
@@ -412,7 +417,7 @@ impl Studio {
                             .small()
                             .ghost()
                             .icon(IconName::Delete)
-                            .label(self.t("删除", "Delete"))
+                            .label(self.t(Text::Delete))
                             .disabled(style.locked)
                             .on_click(cx.listener(|s, _, w, cx| s.delete(w, cx))),
                     ),

@@ -1,6 +1,6 @@
 # Acceptance record
 
-Updated 2026-11-12. [README](../README.md) · [Development guide](development.md) · [Architecture](architecture.md)
+Updated 2026-11-25. [README](../README.md) · [Development guide](development.md) · [Architecture](architecture.md)
 
 This record separates builds, automated protocol checks, system printing, and native desktop acceptance. Cross-compilation, a configured CI job, or a container test does not establish desktop compatibility on the corresponding target platform. Results below identify the version or development milestone to which they apply.
 
@@ -113,11 +113,33 @@ Local checks on 2026-11-10 used the current macOS 27.2 Apple Silicon host and an
 
 ## Expanded designer (unreleased source)
 
+### Desktop language packs
+
+On 2026-11-26, macOS arm64 runs with English and Simplified Chinese system language preferences opened a shipping template in the corresponding language. Switching the running window updated both navigation and the existing missing-field diagnostics. Restarting with English system preferences retained a manually selected Chinese interface, and switching back restored English. Both languages were visually checked at 1200 × 760 and 480 × 360.
+
+The desktop tests cover the language menu, preference round-tripping, locale fallback, live JSON validation and preserving field names. An isolated build registered a third language pack and rejected both a missing key and a missing named placeholder. The staged macOS resources exposed both languages and their localized Documents-folder prompts. The Windows x64 GNU desktop target passed its compile check. [Language-pack guide](development.md#desktop-language-packs)
+
+### Host-filled printer templates
+
+On 2026-11-26, Studio's macOS arm64 build used the crates.io release of Labelize 1.13.0. For five languages, two orders and two resolutions, the design snapshot, reopened print template and released CLI rendered identical PNG pixels. Code 128 and QR decoded to the supplied order in all 20 cases. At 8 dots/mm all ten native jobs matched the fixed upstream fixtures. The CLI, HTTP and Rust examples also produced identical jobs and PNG pixels for those ten orders.
+
+The desktop field and JSON inputs were checked for whole-record replacement, field diagnostics, superseded requests, tab isolation and session restoration. A native GPUI run opened the DPL logo design and the exported binary template separately. Both exported the preview pixels to PNG and retained the order number and literal braces in a searchable vector PDF. The tests and examples ran without Java or javac on the executable search path. [Templates and reproduction commands](development.md#command-line-use)
+
+During pre-release verification on macOS arm64, the Labelize SDK matched the original Java reference byte-for-byte for two records at 8 and 12 dots/mm across five languages and ten barcode types. Independent decoding verified all 200 symbols, including DPL Aztec values that start with four zeros. The suite also compares 262 symbol positions and rotations, allowing one dot for DPL metric placement. The separate ZPL regression checks 40 barcode cases.
+
+The Studio export command fed the Labelize CLI and a local HTTP service. Their native jobs and Studio previews agreed across 28 records at 8 and 12 dots/mm. This covered two shipping records per language and resolution, DPL Logo jobs, and TSPL and CPCL jobs containing 保温杯. PNG pixels matched across the three render paths, and Poppler recovered the order and product text from vector PDFs. Both Labelize entry points reported missing fields, and the CLI preserved existing output on failure.
+
+The GPUI workflow exercised variable binding, target and font profiles, undo/redo, session snapshots, and export, fill and preview workers for all five languages. The test suite also covers 16- and 24-dot Chinese fonts, GBK and GB18030 files, binary artwork, byte-counted payloads, GTIN captions and literal command delimiters.
+
+All five exported resources had identical SHA-256 hashes after fresh checkouts on macOS, Debian amd64 and Git for Windows 2.56.1 with automatic CRLF conversion. The Windows Git executable ran under Wine. The six current resources, including the DPL logo example, also matched their byte hashes in fresh macOS checkouts with both line-ending settings and a Debian amd64 checkout. A native Windows guest check was unavailable because its guest agent did not start. The bundled-resource regression also runs in the existing Windows and Linux core test jobs.
+
+The only available printer queue was the local virtual queue. Font coverage, physical positioning and paper scanner acceptance still require the target printer, media and firmware. [Reproduce the tests](development.md#command-line-use) · [Language support and upstream issues](print-templates.md#target-capabilities)
+
 ### Variable ZPL templates
 
 Local checks on 2026-11-18 used macOS arm64 and JDK 17.0.14. The native workspace opened the shipping design and generated an 800 × 400 preview. A GPUI workflow check exercised binding, renaming, shared sample editing, undo, redo, serialization and the recovery snapshot. Poppler extracted the sample order number and Chinese product name from a vector PDF with a local proofing font.
 
-The Java example filled two records for each of the ten native barcode types at 8 and 12 dots/mm. An independent decoder recovered the expected values in all 40 cases. The example and tests cover leading zeros, command characters, literal braces, missing fields and invalid GTIN digits. Physical printer font, paper quiet zones and scanner acceptance remain pending. The test host had only the local Labelize virtual queue. [Reproducible Java check](development.md#command-line-use)
+The Java example filled two records for each of the ten native barcode types at 8 and 12 dots/mm. An independent decoder recovered the expected values in all 40 cases. The example and tests cover leading zeros, command characters, literal braces, missing fields and invalid GTIN digits. Physical printer font, paper quiet zones and scanner acceptance remain pending. The test host had only the local Labelize virtual queue. [Current template regression tests](development.md#command-line-use)
 
 ### Static designer
 

@@ -14,7 +14,7 @@ The app also provides a **local virtual printer**: select **Labelize Printer** i
 
 Built with **Rust + GPUI**, the desktop app uses the [Labelize engine](https://github.com/GOODBOY008/labelize) for printer-language parsing and rendering. Labelize is the reusable engine, available as a library, CLI, HTTP service, WebAssembly package, and Android library; this project adds the desktop workspace, visual designer, virtual printer, and job management.
 
-> **v0.5.0** adds searchable vector PDF, optional antialiasing, and 1×–4× PNG export. Printer-language rendering uses Labelize 1.12.0. See [Migration](docs/migration.md) before upgrading and [Acceptance](docs/acceptance.md) for verified environments and remaining checks.
+> **v0.5.0** adds searchable vector PDF, optional antialiasing, and 1×–4× PNG export. That release uses Labelize 1.12.0. See [Migration](docs/migration.md) before upgrading and [Acceptance](docs/acceptance.md) for verified environments and remaining checks.
 
 ## Screenshots
 
@@ -91,7 +91,7 @@ Before installation, the app retains your workspace drafts, waits for file opera
 3. Select **Labelize Printer** in another application's system print dialog and submit a job.
 4. Open **Jobs** to check its status and open the result. **Saved** means the output files have been committed successfully.
 
-Defaults are PDF, the `Labelize` folder under Documents, a 102 × 152 mm label, and 8 dots/mm. Each job gets its own timestamp-and-ID directory containing a single PDF or numbered PNG files. Use the language button above Settings in the sidebar to switch between English and Simplified Chinese; the preference persists across restarts.
+Defaults are PDF, the `Labelize` folder under Documents, a 102 × 152 mm label, and 8 dots/mm. Each job gets its own timestamp-and-ID directory containing a single PDF or numbered PNG files. On first launch Studio uses the first supported system language, with English as the fallback. Use the globe above **Settings** to choose English or 简体中文. Studio remembers your choice.
 
 **Windows setup:** Install the official [ZDesigner driver](https://www.zebra.com/us/en/support-downloads/printers/printer-drivers.html) separately, then refresh detection and select the ZDesigner v10 **ZD421 ZPL 203 dpi** or **300 dpi** driver in **System printer**. Match the queue resolution to 8 or 12 dots/mm, respectively. In ZDesigner Driver Settings, set **Status checking → Status check type** to **Disabled**. The app does not emulate hardware status responses. End-to-end ZDesigner acceptance is still outstanding.
 
@@ -129,7 +129,7 @@ Version **0.4.0** expands the designer to 15 object types: text, rectangles, ell
 
 In the development build, select the target printer's resolution under **Page settings**, choose **ZPL** in the inspector, then click **Export ZPL**. Open the saved `.zpl` from **Jobs** or reopen it in the workspace at the same resolution. The file embeds the design as a monochrome graphic. Keep the `.labelize.json` template to edit individual objects.
 
-To print different data from your own application, select a text or barcode object, choose **Bind variables**, and enter a field such as `{{order_no}}`. **Export ZPL template…** saves a `.tpl.zpl` file that your application can fill and send through its usual printer connection. The same order number can appear in text, a linear barcode and a QR code. Try the [editable shipping label](examples/java/shipping.labelize.json) and [JDK-only integration example](docs/designer.md#print-business-data-from-an-application).
+To print data from your application, bind a field such as `{{name}}` to text or barcodes in **New design**. Choose **ZPL**, **TSPL/TSC**, **EPL2**, **CPCL** or **DPL** and select **Parameter preview** to enter field values or paste a JSON record. **Export print template…** saves a reusable file that Studio can also reopen for parameter preview. Bundle the resulting file with your application and fill each record using Labelize’s CLI, HTTP API or SDK. The shipping example uses the same order number as text, Code 128 and QR. [Editable shipping label](examples/print-templates/shipping.labelize.json) · [Application integration and language support](docs/print-templates.md)
 
 Opening an existing printer-language file shows its source and preview. The embedded Labelize engine determines which commands are supported. Studio expands ZPL `^PQ` copies once. Other languages use the engine's copy behavior.
 

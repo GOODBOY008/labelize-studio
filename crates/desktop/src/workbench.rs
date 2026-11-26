@@ -1,5 +1,5 @@
 use crate::{
-    i18n::{Language, Text},
+    i18n::{Language, Message, Text},
     studio::Studio,
     studio_worker::Preview,
     ui::{ACCENT, BORDER, MUTED},
@@ -28,7 +28,12 @@ use std::{
 
 enum Notice {
     Restored,
-    Message(String),
+    Message(Message),
+    FileError(PathBuf, Message),
+    Waiting {
+        activity: Option<Text>,
+        tabs: String,
+    },
 }
 
 enum PendingDocument {
@@ -54,7 +59,7 @@ pub struct Workbench {
     restoring: bool,
     loading: HashSet<PathBuf>,
     pending_documents: Vec<PendingDocument>,
-    session_error: Option<String>,
+    session_error: Option<Message>,
     recovery_warning: bool,
     notice: Option<Notice>,
     last_saved: bool,
@@ -81,14 +86,18 @@ impl Workbench {
                 s.recent = workspace.recent;
                 s.setup_dismissed = workspace.setup_dismissed;
                 let active = workspace.active;
-                for draft in workspace.tabs { s.insert(draft, window, cx); }
-                if let Some(id) = active { s.activate(&id, window, cx); }
+                for draft in workspace.tabs {
+                    s.insert(draft, window, cx);
+                }
+                if let Some(id) = active {
+                    s.activate(&id, window, cx);
+                }
                 if !warnings.is_empty() {
                     s.recovery_warning = true;
-                    s.session_error = Some(format!("{}\n{}", s.t(
-                        "部分工作区数据无法恢复；原始快照保留在本机。",
-                        "Some workspace data could not be restored; original snapshots remain on disk."
-                    ), warnings.join("\n")));
+                    s.session_error = Some(Message::WithDetail(
+                        Text::RestorePartial,
+                        warnings.join("\n"),
+                    ));
                 } else if !s.tabs.is_empty() {
                     s.notice = Some(Notice::Restored);
                     s.last_saved = true;
@@ -96,7 +105,8 @@ impl Workbench {
                 s.open_pending_documents(window, cx);
                 cx.notify();
             });
-        }).detach();
+        })
+        .detach();
         cx.spawn_in(window, async move |this, cx| loop {
             cx.background_executor()
                 .timer(Duration::from_millis(100))
@@ -135,11 +145,8 @@ impl Workbench {
             focus: cx.focus_handle(),
         }
     }
-    pub fn t(&self, zh: &'static str, en: &'static str) -> &'static str {
-        match self.language {
-            Language::Chinese => zh,
-            Language::English => en,
-        }
+    pub fn t(&self, key: Text) -> &'static str {
+        self.language.text(key)
     }
     pub fn configure(
         &mut self,
@@ -315,10 +322,8 @@ impl Workbench {
                             s.last_saved = s.sequence == sequence;
                         }
                         Err(e) => {
-                            s.session_error = Some(format!(
-                                "{} {e:#}",
-                                s.t("本机草稿暂存失败。", "Could not save local drafts.")
-                            ));
+                            s.session_error =
+                                Some(Message::WithDetail(Text::DraftSaveFailed, format!("{e:#}")));
                             s.save_due = Some(Instant::now());
                         }
                     }
@@ -351,20 +356,17 @@ impl Workbench {
             .collect();
         let opening = !self.loading.is_empty() || !self.pending_documents.is_empty();
         if self.restoring || opening || !pending.is_empty() {
-            let detail = if self.restoring {
-                self.t("正在恢复工作区", "Restoring workspace").to_string()
+            let activity = if self.restoring {
+                Some(Text::RestoringWorkspace)
             } else if opening {
-                self.t("正在打开文件", "Opening files").to_string()
+                Some(Text::OpeningFiles)
             } else {
-                pending.join(", ")
+                None
             };
-            self.notice = Some(Notice::Message(format!(
-                "{} {detail}",
-                self.t(
-                    "请等待文件操作或任务提交完成后再关闭：",
-                    "Wait for the file operation or job submission before closing:"
-                )
-            )));
+            self.notice = Some(Notice::Waiting {
+                activity,
+                tabs: pending.join(", "),
+            });
             cx.notify();
             return false;
         }
@@ -377,7 +379,10 @@ impl Workbench {
         match self.store.save(self.sequence, self.snapshot(cx)) {
             Ok(()) => true,
             Err(e) => {
-                self.session_error=Some(format!("{} {e:#}",self.t("无法暂存草稿，窗口暂未关闭。请检查磁盘并重试。", "Drafts could not be saved. The window remains open; check disk access and retry.")));
+                self.session_error = Some(Message::WithDetail(
+                    Text::DraftSaveBlocked,
+                    format!("{e:#}"),
+                ));
                 cx.notify();
                 false
             }
@@ -396,7 +401,7 @@ impl Workbench {
             files: true,
             directories: false,
             multiple: true,
-            prompt: Some(self.t("打开标签文件", "Open label files").into()),
+            prompt: Some(self.t(Text::OpenLabelFiles).into()),
         });
         cx.spawn_in(window, async move |this, cx| {
             let paths = choice.await;
@@ -407,7 +412,7 @@ impl Workbench {
                             s.open_path(path, w, cx);
                         }
                     }
-                    Ok(Err(e)) => s.notice = Some(Notice::Message(e.to_string())),
+                    Ok(Err(e)) => s.notice = Some(Notice::Message(e.to_string().into())),
                     _ => {}
                 }
                 cx.notify();
@@ -471,15 +476,11 @@ impl Workbench {
                     }
                     Err(e) => {
                         let message = if e.is::<document::UnsupportedBarTender>() {
-                            format!(
-                                "{}\n{}",
-                                path.display(),
-                                s.language.text(Text::BarTenderExport)
-                            )
+                            Text::BarTenderExport.into()
                         } else {
-                            format!("{}: {e:#}", path.display())
+                            Message::Diagnostic(format!("{e:#}"))
                         };
-                        s.notice = Some(Notice::Message(message));
+                        s.notice = Some(Notice::FileError(path, message));
                     }
                 }
                 cx.notify();
@@ -535,7 +536,7 @@ impl Workbench {
                     .p_4()
                     .text_sm()
                     .text_color(rgb(MUTED))
-                    .child(self.t("还没有最近文件", "No recent files yet")),
+                    .child(self.t(Text::NoRecentFiles)),
             );
         }
         for (i, path) in self.recent.iter().enumerate() {
@@ -630,7 +631,7 @@ impl Render for Workbench {
                                     .xsmall()
                                     .ghost()
                                     .icon(IconName::Close)
-                                    .tooltip(self.t("关闭标签页", "Close tab"))
+                                    .tooltip(self.t(Text::CloseTab))
                                     .on_click(move |_, w, cx| {
                                         cx.stop_propagation();
                                         close.update(cx, |s, cx| s.request_tab_close(w, cx));
@@ -648,7 +649,7 @@ impl Render for Workbench {
                     .py_2()
                     .text_sm()
                     .text_color(rgb(MUTED))
-                    .child(self.t("工作台", "Workspace")),
+                    .child(self.t(Text::Studio)),
             );
         }
         let tabbar = div()
@@ -665,7 +666,7 @@ impl Render for Workbench {
                     .small()
                     .ghost()
                     .icon(IconName::Plus)
-                    .tooltip(self.t("新建设计", "New design"))
+                    .tooltip(self.t(Text::NewDesign))
                     .disabled(self.restoring)
                     .on_click(cx.listener(|s, _, w, cx| s.new_design(w, cx))),
             )
@@ -674,7 +675,7 @@ impl Render for Workbench {
                     .small()
                     .ghost()
                     .icon(IconName::ChevronDown)
-                    .tooltip(self.t("所有标签页", "All tabs"))
+                    .tooltip(self.t(Text::AllTabs))
                     .on_click(cx.listener(|s, _, _, cx| {
                         s.documents_menu = !s.documents_menu;
                         s.menu = false;
@@ -689,7 +690,7 @@ impl Render for Workbench {
                         .small()
                         .ghost()
                         .icon(IconName::FolderOpen)
-                        .label(self.t("打开文件", "Open file"))
+                        .label(self.t(Text::OpenFile))
                         .on_click(cx.listener(|s, _, w, cx| s.open(w, cx))),
                 )
                 .child(
@@ -697,7 +698,7 @@ impl Render for Workbench {
                         .small()
                         .ghost()
                         .icon(IconName::Plus)
-                        .label(self.t("新建设计", "New design"))
+                        .label(self.t(Text::NewDesign))
                         .disabled(self.restoring)
                         .on_click(cx.listener(|s, _, w, cx| s.new_design(w, cx))),
                 );
@@ -706,7 +707,7 @@ impl Render for Workbench {
             .child(
                 Button::new("save-label")
                     .small()
-                    .label(self.t("保存", "Save"))
+                    .label(self.t(Text::Save))
                     .disabled(active.as_ref().is_none_or(|t| t.read(cx).is_saving()))
                     .on_click(cx.listener(|s, _, w, cx| s.save(w, cx))),
             )
@@ -715,7 +716,7 @@ impl Render for Workbench {
                     .small()
                     .ghost()
                     .icon(IconName::Ellipsis)
-                    .tooltip(self.t("更多操作", "More actions"))
+                    .tooltip(self.t(Text::MoreActions))
                     .on_click(cx.listener(|s, _, _, cx| {
                         s.menu = !s.menu;
                         s.documents_menu = false;
@@ -742,9 +743,9 @@ impl Render for Workbench {
                     .small()
                     .primary()
                     .label(match format {
-                        OutputFormat::Pdf => self.t("导出 PDF", "Export PDF"),
-                        OutputFormat::Png => self.t("导出 PNG", "Export PNG"),
-                        OutputFormat::Zpl => self.t("导出 ZPL", "Export ZPL"),
+                        OutputFormat::Pdf => self.t(Text::ExportPdf),
+                        OutputFormat::Png => self.t(Text::ExportPng),
+                        OutputFormat::Zpl => self.t(Text::ExportZpl),
                     })
                     .disabled(active.as_ref().is_none_or(|t| !t.read(cx).can_export()))
                     .on_click(cx.listener(|s, _, w, cx| s.export(w, cx))),
@@ -774,14 +775,14 @@ impl Render for Workbench {
                     .p_3()
                     .bg(rgb(0xffeeee))
                     .text_xs()
-                    .child(error.clone())
+                    .child(error.display(self.language))
                     .child(
                         Button::new("retry-session")
                             .small()
                             .label(if self.recovery_warning {
-                                self.t("保留现有快照并重试", "Keep snapshots and retry")
+                                self.t(Text::KeepSnapshots)
                             } else {
-                                self.t("重试暂存", "Retry saving drafts")
+                                self.t(Text::RetryDraftSave)
                             })
                             .on_click(cx.listener(|s, _, _, cx| {
                                 // Preserve a complete forensic copy before acknowledging recovery errors.
@@ -801,7 +802,7 @@ impl Render for Workbench {
                                         s.recovery_warning = false;
                                         s.changed(cx);
                                     }
-                                    Err(e) => s.session_error = Some(e.to_string()),
+                                    Err(e) => s.session_error = Some(e.to_string().into()),
                                 }
                                 cx.notify();
                             })),
@@ -810,11 +811,22 @@ impl Render for Workbench {
         }
         if let Some(notice) = &self.notice {
             let message = match notice {
-                Notice::Restored => self.t(
-                    "已恢复上次工作区；未保存内容仍在本机草稿中。",
-                    "Workspace restored. Unsaved changes are kept in local drafts.",
+                Notice::Restored => self.t(Text::WorkspaceRestored).to_owned(),
+                Notice::Message(message) => message.display(self.language),
+                Notice::FileError(path, error) => self.language.format(
+                    Text::OutputLocationError,
+                    &[
+                        ("path", &path.display().to_string()),
+                        ("detail", &error.display(self.language)),
+                    ],
                 ),
-                Notice::Message(message) => message,
+                Notice::Waiting { activity, tabs } => self.language.format(
+                    Text::WaitBeforeClosing,
+                    &[(
+                        "activity",
+                        activity.map_or(tabs.as_str(), |text| self.t(text)),
+                    )],
+                ),
             };
             root = root.child(
                 div()
@@ -841,13 +853,72 @@ impl Render for Workbench {
         if let Some(active) = active {
             root = root.child(div().flex_1().min_h_0().min_w_0().child(active));
         } else {
-            root=root.child(div().id("empty-workspace-scroll").flex_1().min_h_0().overflow_y_scroll().child(div().w_full().max_w(px(700.)).mx_auto().px_6().py_8().flex().flex_col().gap_5()
-                .child(div().text_2xl().font_weight(FontWeight::SEMIBOLD).child(self.t("从一个标签开始", "Start with a label")))
-                .child(div().text_sm().text_color(rgb(MUTED)).child(self.t("打开打印语言文件预览标签，或新建设计并导出 PDF、PNG 或 ZPL。", "Open a printer-language file to preview its labels, or create a design to export as PDF, PNG, or ZPL.")))
-                .child(div().flex().flex_wrap().gap_3().child(Button::new("empty-open").primary().icon(IconName::FolderOpen).label(self.t("打开文件…", "Open file…")).on_click(cx.listener(|s,_,w,cx|s.open(w,cx))))
-                    .child(Button::new("empty-new").icon(IconName::Plus).label(self.t("新建设计", "New design")).disabled(self.restoring).on_click(cx.listener(|s,_,w,cx|s.new_design(w,cx)))))
-                .child(div().text_xs().text_color(rgb(MUTED)).child("ZPL · EPL · TSPL · CPCL · DPL · .labelize.json"))
-                .child(div().pt_3().text_sm().font_weight(FontWeight::SEMIBOLD).child(self.t("最近文件", "Recent files"))).child(self.recent_view(cx))));
+            root = root.child(
+                div()
+                    .id("empty-workspace-scroll")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .child(
+                        div()
+                            .w_full()
+                            .max_w(px(700.))
+                            .mx_auto()
+                            .px_6()
+                            .py_8()
+                            .flex()
+                            .flex_col()
+                            .gap_5()
+                            .child(
+                                div()
+                                    .text_2xl()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child(self.t(Text::StartWithLabel)),
+                            )
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(rgb(MUTED))
+                                    .child(self.t(Text::OpenOrDesignHint)),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_wrap()
+                                    .gap_3()
+                                    .child(
+                                        Button::new("empty-open")
+                                            .primary()
+                                            .icon(IconName::FolderOpen)
+                                            .label(self.t(Text::OpenFileDialog))
+                                            .on_click(cx.listener(|s, _, w, cx| s.open(w, cx))),
+                                    )
+                                    .child(
+                                        Button::new("empty-new")
+                                            .icon(IconName::Plus)
+                                            .label(self.t(Text::NewDesign))
+                                            .disabled(self.restoring)
+                                            .on_click(
+                                                cx.listener(|s, _, w, cx| s.new_design(w, cx)),
+                                            ),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(rgb(MUTED))
+                                    .child("ZPL · EPL · TSPL · CPCL · DPL · .labelize.json"),
+                            )
+                            .child(
+                                div()
+                                    .pt_3()
+                                    .text_sm()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child(self.t(Text::RecentFiles)),
+                            )
+                            .child(self.recent_view(cx)),
+                    ),
+            );
         }
         root = root.child(
             div()
@@ -862,19 +933,13 @@ impl Render for Workbench {
                 .text_size(px(11.))
                 .text_color(rgb(MUTED))
                 .child(if self.restoring {
-                    self.t("正在恢复工作区…", "Restoring workspace…")
+                    self.t(Text::RestoringWorkspaceProgress)
                 } else if !self.loading.is_empty() {
-                    self.t("正在打开文件…", "Opening files…")
+                    self.t(Text::OpeningFilesProgress)
                 } else if self.last_saved {
-                    self.t(
-                        "工作区已暂存至本机 · 草稿不等于保存源文件",
-                        "Workspace saved locally · drafts do not overwrite source files",
-                    )
+                    self.t(Text::WorkspaceSaved)
                 } else {
-                    self.t(
-                        "修改将在本机自动暂存",
-                        "Changes are saved to local drafts automatically",
-                    )
+                    self.t(Text::DraftAutosave)
                 }),
         );
         if self.menu || self.documents_menu {
@@ -934,7 +999,7 @@ impl Render for Workbench {
                         Button::new("menu-open")
                             .ghost()
                             .justify_start()
-                            .label(self.t("打开文件…", "Open file…"))
+                            .label(self.t(Text::OpenFileDialog))
                             .on_click(cx.listener(|s, _, w, cx| {
                                 s.menu = false;
                                 s.focus.focus(w);
@@ -945,7 +1010,7 @@ impl Render for Workbench {
                         Button::new("menu-new")
                             .ghost()
                             .justify_start()
-                            .label(self.t("新建设计", "New design"))
+                            .label(self.t(Text::NewDesign))
                             .on_click(cx.listener(|s, _, w, cx| {
                                 s.menu = false;
                                 s.focus.focus(w);
@@ -956,7 +1021,7 @@ impl Render for Workbench {
                         Button::new("menu-save-as")
                             .ghost()
                             .justify_start()
-                            .label(self.t("另存为…", "Save as…"))
+                            .label(self.t(Text::SaveAs))
                             .on_click(cx.listener(|s, _, w, cx| {
                                 s.menu = false;
                                 s.focus.focus(w);
@@ -967,7 +1032,7 @@ impl Render for Workbench {
                         Button::new("menu-close")
                             .ghost()
                             .justify_start()
-                            .label(self.t("关闭标签页", "Close tab"))
+                            .label(self.t(Text::CloseTab))
                             .on_click(cx.listener(|s, _, w, cx| {
                                 s.menu = false;
                                 s.focus.focus(w);

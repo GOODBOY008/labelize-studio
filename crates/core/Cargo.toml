@@ -38,13 +38,18 @@ directories.workspace = true
 interprocess.workspace = true
 fs2.workspace = true
 libc.workspace = true
-labelize = { version = "=1.12.0", default-features = false, features = ["vector"], optional = true }
+labelize = { version = "=1.13.0", default-features = false, features = ["vector"], optional = true }
 krilla = { version = "0.8.2", default-features = false, features = ["raster-images"], optional = true }
 tiny-skia = { version = "0.12", optional = true }
 
 [dev-dependencies]
 tempfile.workspace = true
 rxing = { version = "0.9", default-features = false, features = ["decoders", "oned", "qrcode", "datamatrix", "pdf417", "aztec", "encoding_rs"] }
+
+[[example]]
+name = "preview-order"
+path = "../../examples/print-templates/order.rs"
+required-features = ["render"]
 
 [target.'cfg(windows)'.dependencies]
 widestring = "1"

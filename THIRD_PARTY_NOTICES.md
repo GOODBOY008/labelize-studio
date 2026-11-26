@@ -5,6 +5,8 @@ PAPPL 1.4.12 (Apache-2.0 with LLVM exception), and OpenSSL 3.5.9 (Apache-2.0).
 Native vector PDF uses krilla (MIT / Apache-2.0); scene rasterization uses
 tiny-skia (BSD-3-Clause). Their dependencies and notices are included by the
 same license collection step used for every package.
+Labelize's Chinese device-font preview uses a GNU Unifont subset.
+Its OFL notice is bundled with the Labelize 1.13.0 licenses. [Unifont notice](https://github.com/GOODBOY008/labelize/blob/v1.13.0/licenses/Unifont-OFL.txt)
 Native packages link CUPS and operating-system frameworks as system libraries.
 The native build patches PAPPL to preserve client raster headers and accept
 sRGB input for grayscale conversion. See [the native build script](scripts/build/native.sh).

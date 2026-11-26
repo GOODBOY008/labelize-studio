@@ -1,6 +1,7 @@
 #![cfg(feature = "render")]
 
 use image::GrayImage;
+use labelize::{Language, PrintTemplate, TemplateValues};
 use labelize_printer_core::{
     design::{
         Background, DesignDocument, DesignObject, HorizontalAlign, ObjectKind, VerticalAlign,
@@ -8,13 +9,7 @@ use labelize_printer_core::{
     document::{self, DocumentKind},
     RenderMode, Settings,
 };
-use std::{
-    fs,
-    path::Path,
-    process::{Command, Output},
-};
-
-const SHIPPING: &str = include_str!("../../../examples/java/shipping.labelize.json");
+const SHIPPING: &str = include_str!("../../../examples/print-templates/shipping.labelize.json");
 
 fn shipping() -> DesignDocument {
     serde_json::from_str(SHIPPING).unwrap()
@@ -108,7 +103,7 @@ fn exported_example_and_layer_rules() {
     let d = shipping();
     assert_eq!(
         d.to_zpl_template(8).unwrap(),
-        include_str!("../../../examples/java/shipping.tpl.zpl")
+        include_str!("../../../examples/print-templates/shipping.tpl.zpl")
     );
     let mut d = object(ObjectKind::Text, "中文");
     assert!(format!("{:#}", d.to_zpl_template(8).unwrap_err()).contains("font path"));
@@ -136,54 +131,17 @@ fn exported_example_and_layer_rules() {
     assert!(ink.pixels().any(|p| p[0] == 0) && ink.pixels().any(|p| p[0] == 255));
 }
 
-fn success(output: Output) -> Vec<u8> {
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    output.stdout
+fn native_template(design: &DesignDocument, dpmm: i32) -> PrintTemplate {
+    PrintTemplate::load(
+        Language::Zpl,
+        design.to_zpl_template(dpmm).unwrap().as_bytes(),
+    )
+    .unwrap()
 }
 
 #[test]
-#[ignore = "end-to-end interoperability requires JDK 17 or newer"]
-fn java_fills_exported_zpl_and_independent_scanners_read_all_ten_codes() {
+fn filled_zpl_and_independent_scanners_read_all_ten_codes() {
     use rxing::BarcodeFormat::*;
-    let temp = tempfile::tempdir().unwrap();
-    let dir = temp.path();
-    let examples = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/java");
-    let probe = dir.join("Fill.java");
-    fs::write(
-        &probe,
-        r#"import java.nio.file.*;
-import java.util.Map;
-public class Fill {
-    public static void main(String[] a) throws Exception {
-        System.out.write(ZplTemplate.fill(Files.readString(Path.of(a[0])),
-            a.length == 2 ? Map.of("value", a[1]) : Map.of()));
-    }
-}"#,
-    )
-    .unwrap();
-    success(
-        Command::new("javac")
-            .args(["-encoding", "UTF-8", "-d"])
-            .arg(dir)
-            .arg(examples.join("ZplTemplate.java"))
-            .arg(examples.join("OrderLabel.java"))
-            .arg(probe)
-            .output()
-            .unwrap(),
-    );
-    let template = dir.join("label.tpl.zpl");
-    let fill = |value: Option<&str>| {
-        let mut command = Command::new("java");
-        command.arg("-cp").arg(dir).arg("Fill").arg(&template);
-        if let Some(value) = value {
-            command.arg(value);
-        }
-        command.output().unwrap()
-    };
     let formats = [
         CODE_128,
         CODE_39,
@@ -211,9 +169,11 @@ public class Fill {
     for ((kind, format), values) in ObjectKind::BARCODES.into_iter().zip(formats).zip(pairs) {
         for dpmm in [8, 12] {
             let d = object(kind, values[0]);
-            fs::write(&template, d.to_zpl_template(dpmm).unwrap()).unwrap();
+            let template = native_template(&d, dpmm);
             for value in values {
-                let bytes = success(fill(Some(value)));
+                let bytes = template
+                    .fill(&[("value".into(), value.into())].into())
+                    .unwrap();
                 let page = rendered(&bytes, dpmm);
                 let o = &d.objects[0];
                 let dot = |mm: f64| (mm * f64::from(dpmm)).round() as u32;
@@ -236,46 +196,36 @@ public class Fill {
             }
         }
     }
-    fs::write(
-        &template,
-        object(ObjectKind::Ean13, "5901234123457")
-            .to_zpl_template(8)
-            .unwrap(),
-    )
-    .unwrap();
+    let retail = native_template(&object(ObjectKind::Ean13, "5901234123457"), 8);
+    let values = |s: &str| TemplateValues::from([("value".into(), s.into())]);
     assert_eq!(
-        success(fill(Some("590123412345"))),
-        success(fill(Some("5901234123457")))
+        retail.fill(&values("590123412345")).unwrap(),
+        retail.fill(&values("5901234123457")).unwrap()
     );
-    for bad in [None, Some("000ABC"), Some("5901234123450")] {
-        let result = fill(bad);
-        assert!(!result.status.success() && result.stdout.is_empty());
-        assert!(String::from_utf8_lossy(&result.stderr).contains("value"));
+    for bad in [
+        TemplateValues::new(),
+        values("000ABC"),
+        values("5901234123450"),
+    ] {
+        assert!(retail.fill(&bad).unwrap_err().to_string().contains("value"));
     }
-    // Run the bundled business application against the exported classpath resource.
-    fs::write(
-        dir.join("shipping.tpl.zpl"),
-        shipping().to_zpl_template(8).unwrap(),
-    )
-    .unwrap();
+    let template = native_template(&shipping(), 8);
     for order in ["SO-00123", "SO-00456"] {
-        let path = dir.join("order.zpl");
-        success(
-            Command::new("java")
-                .arg("-cp")
-                .arg(dir)
-                .arg("OrderLabel")
-                .args([order, "A^~_{{order_no}}"])
-                .arg(&path)
-                .output()
-                .unwrap(),
-        );
-        let result = fs::read_to_string(path).unwrap();
+        let job = template
+            .fill(
+                &[
+                    ("order_no".into(), order.into()),
+                    ("product".into(), "A^~_{{order_no}}".into()),
+                ]
+                .into(),
+            )
+            .unwrap();
+        let result = String::from_utf8(job).unwrap();
         assert_eq!(result.matches(order).count(), 3);
         assert!(result.contains("A_5E_7E_5F_7B_7Border_5Fno_7D_7D"));
         assert_eq!(rendered(result.as_bytes(), 8).dimensions(), (800, 400));
         let settings = Settings {
-            output_dir: dir.to_owned(),
+            output_dir: std::env::temp_dir(),
             ..Default::default()
         };
         let (pdf, _) =
@@ -292,8 +242,10 @@ public class Fill {
     }
     let mut chinese = object(ObjectKind::Text, "订单");
     chinese.printer_font = "E:CJK.TTF".into();
-    fs::write(&template, chinese.to_zpl_template(8).unwrap()).unwrap();
-    let bytes = String::from_utf8(success(fill(Some("订单^~_{{value}}")))).unwrap();
+    let job = native_template(&chinese, 8)
+        .fill(&values("订单^~_{{value}}"))
+        .unwrap();
+    let bytes = String::from_utf8(job).unwrap();
     assert!(bytes.contains("^A@N,32,32,E:CJK.TTF"));
     assert!(bytes.contains("_E8_AE_A2_E5_8D_95_5E_7E_5F_7B_7Bvalue_7D_7D"));
 }

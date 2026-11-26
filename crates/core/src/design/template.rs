@@ -40,7 +40,7 @@ pub(super) fn parts(mut text: &str) -> Result<Vec<Part<'_>>> {
     ensure!(
         !result.is_empty(),
         "Enter a variable such as {}",
-        "{{order_no}}"
+        "{{name}}"
     );
     result.push(Part::Literal(text));
     Ok(result)
@@ -77,11 +77,13 @@ impl DesignObject {
 
 impl DesignDocument {
     pub fn portable_version(&self) -> u32 {
-        if self.objects.iter().any(|o| o.variable)
+        if !self.printer_profiles.is_empty() {
+            TEMPLATE_VERSION
+        } else if self.objects.iter().any(|o| o.variable)
             || !self.samples.is_empty()
             || !self.printer_font.is_empty()
         {
-            TEMPLATE_VERSION
+            3
         } else {
             2
         }
@@ -138,6 +140,13 @@ impl DesignDocument {
     }
 
     pub(super) fn validate_bindings(&self) -> Result<()> {
+        ensure!(
+            self.printer_profiles.is_empty() || self.version >= 4,
+            "Printer profiles require a version 4 design"
+        );
+        for (&language, profile) in &self.printer_profiles {
+            profile.validate(language)?;
+        }
         ensure!(
             self.version >= 3 || self.portable_version() == 2,
             "Variable fields require a version 3 design"

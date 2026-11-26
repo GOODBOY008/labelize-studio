@@ -60,6 +60,7 @@ fn all_file_languages_preview_and_output_match_pixels_and_sizes() {
         let dir = temp.path().join(kind.name());
         let preview = document::preview(
             &PreviewRequest {
+                template: None,
                 input: input.clone(),
                 kind,
                 settings: options.clone(),
@@ -116,6 +117,7 @@ fn rejects_bartender_designs_on_open_and_in_previews_with_a_saved_language() {
     let temp = tempfile::tempdir().unwrap();
     let error = document::preview(
         &PreviewRequest {
+            template: None,
             input,
             kind: DocumentKind::Tspl,
             settings: settings(temp.path()),
@@ -150,6 +152,7 @@ fn prn_files_detect_and_render_zpl_and_tspl_bar_commands() {
         let directory = temp.path().join(kind.name());
         let pages = document::preview(
             &PreviewRequest {
+                template: None,
                 input,
                 kind,
                 settings: settings(temp.path()),

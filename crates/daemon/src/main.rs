@@ -54,9 +54,11 @@ enum Action {
         #[arg(long)]
         output: PathBuf,
     },
-    /// Export a portable design as a host-filled ZPL template.
+    /// Export a portable design as a host-filled printer-language template.
     ExportTemplate {
         input: PathBuf,
+        #[arg(long, default_value = "zpl")]
+        language: design::TemplateLanguage,
         #[arg(long)]
         output: PathBuf,
         #[arg(long)]
@@ -141,6 +143,7 @@ fn run() -> Result<()> {
         Action::Serve => return serve(paths),
         Action::ExportTemplate {
             input,
+            language,
             output,
             dpmm,
         } => {
@@ -149,7 +152,7 @@ fn run() -> Result<()> {
             if output.exists() && fs::canonicalize(&output)? == fs::canonicalize(&input)? {
                 bail!("Choose a different path from the editable design");
             }
-            return atomic_write(&output, design.to_zpl_template(dpmm)?.as_bytes());
+            return atomic_write(&output, &design.to_print_template(language, dpmm)?);
         }
         Action::Preview { request, output } => {
             let request: document::PreviewRequest =

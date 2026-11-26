@@ -54,10 +54,12 @@ jobs:
       - run: bash scripts/build/native.sh release
       - run: cargo test -p labelize-printer-updater --release --locked
       - run: cargo test -p labelize-printer-core --release --locked
-      - name: Verify Java-filled ZPL with independent barcode decoders
+      - name: Compare Studio parameter previews with Labelize CLI
         if: matrix.arch == 'arm64'
-        run: PATH="$JAVA_HOME_17_arm64/bin:$PATH" cargo test -p labelize-printer-core --release --locked --test zpl_templates -- --ignored
-      - run: cargo test -p labelize-printer --lib --release --locked
+        run: |
+          cargo install labelize --version '=1.13.0' --features cli --locked --debug
+          LABELIZE_CLI=labelize cargo test -p labelize-printer-core --release --locked --test print_templates template_previews_match_native_jobs_and_scan
+      - run: cargo test -p labelize-printer --lib --bins --release --locked
       - run: python3 scripts/test/update-smoke.py --profile release
       - run: python3 scripts/test/smoke.py --profile release
       - run: python3 scripts/test/macos-migration.py

@@ -41,6 +41,9 @@ pub fn check_input_format(bytes: &[u8]) -> Result<(), UnsupportedBarTender> {
 impl DocumentKind {
     pub fn detect(path: &Path, bytes: &[u8]) -> Result<Self, UnsupportedBarTender> {
         check_input_format(bytes)?;
+        if let Some(language) = crate::design::TemplateLanguage::from_template_path(path) {
+            return Ok(language.document_kind());
+        }
         if path.file_name().is_some_and(|s| {
             s.to_string_lossy()
                 .to_ascii_lowercase()
@@ -234,32 +237,43 @@ pub fn vector_pdf(
 /// Invoked only in the standalone renderer process; the GUI never parses input.
 pub fn preview(request: &PreviewRequest, directory: &Path) -> Result<Vec<PreviewPage>> {
     fs::create_dir_all(directory)?;
+    let mut bytes = read_input(&request.input)?;
+    let mut kind = request.kind;
+    if let Some(record) = &request.template {
+        let (report, job) = record.prepare(&bytes, kind, request.settings.dpmm)?;
+        crate::paths::atomic_write(
+            &directory.join(super::TEMPLATE_REPORT),
+            &serde_json::to_vec(&report)?,
+        )?;
+        let Some(job) = job else {
+            crate::paths::atomic_write(&directory.join("pages.json"), b"[]")?;
+            return Ok(Vec::new());
+        };
+        bytes = job;
+        kind = record.language.document_kind();
+        crate::paths::atomic_write(&directory.join(super::FILLED_JOB), &bytes)?;
+    }
     let mut pages = Vec::new();
     let mut total_pixels = 0u64;
-    render(
-        &read_input(&request.input)?,
-        request.kind,
-        &request.settings,
-        |page| {
-            // Preview is a disk cache, bounded separately from export. Never keep
-            // an entire multipage job's decoded pixels in the desktop process.
-            total_pixels += u64::from(page.pixels.width()) * u64::from(page.pixels.height());
-            ensure!(
-                total_pixels <= 128 * 1024 * 1024,
-                "Preview exceeds 128 Mi pixels; export the full document instead"
-            );
-            let file = PathBuf::from(format!("page-{}.png", pages.len() + 1));
-            page.pixels.save(directory.join(&file))?;
-            pages.push(PreviewPage {
-                file,
-                width_mm: page.width_mm,
-                height_mm: page.height_mm,
-                width: page.pixels.width(),
-                height: page.pixels.height(),
-            });
-            Ok(())
-        },
-    )?;
+    render(&bytes, kind, &request.settings, |page| {
+        // Preview is a disk cache, bounded separately from export. Never keep
+        // an entire multipage job's decoded pixels in the desktop process.
+        total_pixels += u64::from(page.pixels.width()) * u64::from(page.pixels.height());
+        ensure!(
+            total_pixels <= 128 * 1024 * 1024,
+            "Preview exceeds 128 Mi pixels; export the full document instead"
+        );
+        let file = PathBuf::from(format!("page-{}.png", pages.len() + 1));
+        page.pixels.save(directory.join(&file))?;
+        pages.push(PreviewPage {
+            file,
+            width_mm: page.width_mm,
+            height_mm: page.height_mm,
+            width: page.pixels.width(),
+            height: page.pixels.height(),
+        });
+        Ok(())
+    })?;
     crate::paths::atomic_write(&directory.join("pages.json"), &serde_json::to_vec(&pages)?)?;
     Ok(pages)
 }

@@ -1,12 +1,16 @@
 use std::{env, fs, path::PathBuf};
 
+#[path = "build/locales.rs"]
+mod locales;
+
 fn main() {
+    let out = PathBuf::from(env::var_os("OUT_DIR").expect("Cargo sets OUT_DIR"));
+    locales::compile(&out);
     if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
         return;
     }
 
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let out = PathBuf::from(env::var_os("OUT_DIR").expect("Cargo sets OUT_DIR"));
     let icon = root.join("platform/windows/labelize-printer.ico");
     println!("cargo:rerun-if-changed={}", icon.display());
     let resource = out.join("labelize-printer.rc");
